@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "signaldesk-alerts"
+version = "0.1.0"
+description = "A modern background desktop client for real-time Socket.IO alerts."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [
+  { name = "Nielk74" },
+]
+keywords = ["alerts", "desktop", "notifications", "pyside6", "socketio"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Win32 (MS Windows)",
+  "Environment :: X11 Applications :: Qt",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Desktop Environment",
+  "Topic :: System :: Monitoring",
+]
+dependencies = [
+  "PySide6>=6.8,<7",
+  "python-socketio[client]>=5.12,<6",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "ruff>=0.11,<1",
+]
+build = [
+  "pyinstaller>=6.12,<7",
+]
+
+[project.scripts]
+signaldesk = "signaldesk.app:main"
+signaldesk-mock = "signaldesk.mock_server:main"
+
+[project.urls]
+Homepage = "https://github.com/Nielk74/signaldesk"
+Repository = "https://github.com/Nielk74/signaldesk"
+Issues = "https://github.com/Nielk74/signaldesk/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/signaldesk"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
