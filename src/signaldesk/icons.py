@@ -40,7 +40,7 @@ def make_app_icon() -> QIcon:
         path.lineTo(size * 0.65, size * 0.46)
         path.lineTo(size * 0.80, size * 0.46)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(_rounded_pen("#07101F", max(1.6, size * 0.085)))
+        painter.setPen(_rounded_pen(COLORS["on_primary"], max(1.6, size * 0.085)))
         painter.drawPath(path)
         painter.end()
         icon.addPixmap(pixmap)

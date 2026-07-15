@@ -102,7 +102,7 @@ class AlertToast(QWidget):
         shadow = QGraphicsDropShadowEffect(card)
         shadow.setBlurRadius(26)
         shadow.setOffset(0, 7)
-        shadow.setColor(color("background", 210))
+        shadow.setColor(color("shadow", 55))
         card.setGraphicsEffect(shadow)
         outer.addWidget(card)
 

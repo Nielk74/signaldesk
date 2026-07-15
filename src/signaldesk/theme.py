@@ -5,21 +5,24 @@ from __future__ import annotations
 from PySide6.QtGui import QColor
 
 COLORS = {
-    "background": "#080D18",
-    "surface": "#101827",
-    "surface_raised": "#162033",
-    "surface_hover": "#1C2940",
-    "border": "#28364D",
-    "border_strong": "#3A4B67",
-    "text": "#F8FAFC",
-    "text_secondary": "#B6C2D4",
-    "muted": "#8492A8",
-    "primary": "#5B8CFF",
-    "primary_hover": "#73A0FF",
-    "info": "#38BDF8",
-    "success": "#34D399",
-    "warning": "#FBBF24",
-    "critical": "#FB7185",
+    "background": "#F4F6F3",
+    "surface": "#FFFFFF",
+    "surface_raised": "#F7F9F5",
+    "surface_hover": "#EEF3EA",
+    "border": "#E3E8E0",
+    "border_strong": "#CBD4C6",
+    "text": "#14231B",
+    "text_secondary": "#4B5A52",
+    "muted": "#7A897F",
+    "primary": "#00915A",
+    "primary_hover": "#0AA268",
+    "primary_pressed": "#007A4B",
+    "on_primary": "#FFFFFF",
+    "shadow": "#14231B",
+    "info": "#0B74C4",
+    "success": "#00915A",
+    "warning": "#C77700",
+    "critical": "#D9414E",
 }
 
 SEVERITY_COLORS = {
@@ -37,6 +40,12 @@ def color(name: str, alpha: int | None = None) -> QColor:
     return value
 
 
+def tint(name: str, alpha: int) -> str:
+    """Return a translucent ``rgba(...)`` string for the named token."""
+    c = QColor(COLORS[name])
+    return f"rgba({c.red()}, {c.green()}, {c.blue()}, {alpha})"
+
+
 APP_STYLESHEET = f"""
 * {{
     font-family: "Segoe UI Variable", "Segoe UI", "Inter", sans-serif;
@@ -50,7 +59,7 @@ QMainWindow#RootWindow, QWidget#RootContent {{
 
 QLabel#BrandTitle {{
     font-size: 20px;
-    font-weight: 700;
+    font-weight: 750;
 }}
 
 QLabel#BrandSubtitle, QLabel[role="muted"] {{
@@ -76,7 +85,7 @@ QFrame#Card, QFrame#ConnectionCard, QFrame#EndpointCard, QFrame#ChannelRow,
 QFrame#AlertHistoryRow {{
     background-color: {COLORS["surface"]};
     border: 1px solid {COLORS["border"]};
-    border-radius: 12px;
+    border-radius: 14px;
 }}
 
 QFrame#ChannelRow:hover, QFrame#AlertHistoryRow:hover {{
@@ -99,7 +108,7 @@ QPushButton {{
 
 QPushButton#PrimaryButton {{
     background-color: {COLORS["primary"]};
-    color: #07101F;
+    color: {COLORS["on_primary"]};
 }}
 
 QPushButton#PrimaryButton:hover {{
@@ -107,11 +116,11 @@ QPushButton#PrimaryButton:hover {{
 }}
 
 QPushButton#PrimaryButton:pressed {{
-    background-color: #4B7CEB;
+    background-color: {COLORS["primary_pressed"]};
 }}
 
 QPushButton#SecondaryButton {{
-    background-color: {COLORS["surface_raised"]};
+    background-color: {COLORS["surface"]};
     border-color: {COLORS["border_strong"]};
 }}
 
@@ -150,22 +159,23 @@ QPushButton:focus, QLineEdit:focus, QCheckBox:focus {{
 }}
 
 QPushButton:disabled {{
-    color: #718096;
-    background-color: #182235;
-    border-color: #263248;
+    color: {COLORS["muted"]};
+    background-color: {COLORS["surface_hover"]};
+    border-color: {COLORS["border"]};
 }}
 
 QLineEdit {{
     min-height: 42px;
     padding: 0 12px;
-    background-color: #0B1220;
+    background-color: {COLORS["surface_raised"]};
     border: 1px solid {COLORS["border_strong"]};
     border-radius: 9px;
     selection-background-color: {COLORS["primary"]};
+    selection-color: {COLORS["on_primary"]};
 }}
 
 QLineEdit:hover {{
-    border-color: #526784;
+    border-color: {COLORS["muted"]};
 }}
 
 QLineEdit[invalid="true"] {{
@@ -181,8 +191,8 @@ QCheckBox::indicator {{
     width: 22px;
     height: 22px;
     border-radius: 7px;
-    border: 2px solid #52627B;
-    background-color: #0B1220;
+    border: 2px solid {COLORS["border_strong"]};
+    background-color: {COLORS["surface"]};
 }}
 
 QCheckBox::indicator:hover {{
@@ -222,8 +232,9 @@ QTabBar::tab:hover {{
 }}
 
 QTabBar::tab:selected {{
-    background-color: {COLORS["surface_raised"]};
-    color: {COLORS["text"]};
+    background-color: {COLORS["surface"]};
+    color: {COLORS["primary"]};
+    border: 1px solid {COLORS["border"]};
 }}
 
 QScrollArea, QScrollArea > QWidget > QWidget, QAbstractScrollArea::viewport {{
@@ -238,13 +249,13 @@ QScrollBar:vertical {{
 }}
 
 QScrollBar::handle:vertical {{
-    background: #34445E;
+    background: {COLORS["border_strong"]};
     min-height: 30px;
     border-radius: 4px;
 }}
 
 QScrollBar::handle:vertical:hover {{
-    background: #465A78;
+    background: {COLORS["muted"]};
 }}
 
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
@@ -266,20 +277,20 @@ QLabel#StatusPill {{
 
 QLabel#StatusPill[connectionState="connected"] {{
     color: {COLORS["success"]};
-    background-color: rgba(52, 211, 153, 28);
-    border: 1px solid rgba(52, 211, 153, 75);
+    background-color: {tint("success", 28)};
+    border: 1px solid {tint("success", 90)};
 }}
 
 QLabel#StatusPill[connectionState="connecting"] {{
     color: {COLORS["warning"]};
-    background-color: rgba(251, 191, 36, 25);
-    border: 1px solid rgba(251, 191, 36, 68);
+    background-color: {tint("warning", 28)};
+    border: 1px solid {tint("warning", 90)};
 }}
 
 QLabel#StatusPill[connectionState="disconnected"], QLabel#StatusPill[connectionState="stopped"] {{
     color: {COLORS["critical"]};
-    background-color: rgba(251, 113, 133, 25);
-    border: 1px solid rgba(251, 113, 133, 68);
+    background-color: {tint("critical", 28)};
+    border: 1px solid {tint("critical", 90)};
 }}
 
 QLabel#SeverityBadge {{
@@ -289,14 +300,14 @@ QLabel#SeverityBadge {{
     font-weight: 700;
 }}
 
-QLabel#SeverityBadge[severity="info"] {{ color: {COLORS["info"]}; background: rgba(56, 189, 248, 25); }}
-QLabel#SeverityBadge[severity="success"] {{ color: {COLORS["success"]}; background: rgba(52, 211, 153, 25); }}
-QLabel#SeverityBadge[severity="warning"] {{ color: {COLORS["warning"]}; background: rgba(251, 191, 36, 25); }}
-QLabel#SeverityBadge[severity="critical"] {{ color: {COLORS["critical"]}; background: rgba(251, 113, 133, 25); }}
+QLabel#SeverityBadge[severity="info"] {{ color: {COLORS["info"]}; background: {tint("info", 30)}; }}
+QLabel#SeverityBadge[severity="success"] {{ color: {COLORS["success"]}; background: {tint("success", 30)}; }}
+QLabel#SeverityBadge[severity="warning"] {{ color: {COLORS["warning"]}; background: {tint("warning", 30)}; }}
+QLabel#SeverityBadge[severity="critical"] {{ color: {COLORS["critical"]}; background: {tint("critical", 30)}; }}
 
 QFrame#AlertToast {{
-    background-color: #111A2A;
-    border: 1px solid #34445E;
+    background-color: {COLORS["surface"]};
+    border: 1px solid {COLORS["border"]};
     border-radius: 14px;
 }}
 
@@ -324,7 +335,7 @@ QMenu::separator {{ height: 1px; background: {COLORS["border"]}; margin: 5px 8px
 
 QToolTip {{
     color: {COLORS["text"]};
-    background-color: {COLORS["surface_raised"]};
+    background-color: {COLORS["surface"]};
     border: 1px solid {COLORS["border_strong"]};
     padding: 6px;
 }}
