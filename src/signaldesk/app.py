@@ -15,15 +15,20 @@ from PySide6.QtCore import QObject, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from signaldesk.config import AppConfig, ConfigStore, normalize_server_url
+from signaldesk.config import AppConfig, ConfigStore, ServerConfig, normalize_server_url
 from signaldesk.icons import make_app_icon
 from signaldesk.models import Alert, Severity, utc_now_iso
 from signaldesk.notifications import NotificationManager
-from signaldesk.socket_client import SocketBridge
+from signaldesk.socket_client import SocketManager
 from signaldesk.theme import APP_STYLESHEET
 from signaldesk.window import ManagementWindow
 
 LOGGER = logging.getLogger("signaldesk")
+
+
+def _server_label(url: str) -> str:
+    remainder = url.split("://", 1)[-1]
+    return remainder.split("/", 1)[0] or url
 
 
 class SignalDeskController(QObject):
@@ -40,15 +45,15 @@ class SignalDeskController(QObject):
         self.app = app
         self.config = config
         self.store = store
-        self._connected = False
         self._shutting_down = False
         self._test_pending = False
+        self._states: dict[str, str] = {server.url: "connecting" for server in config.servers}
 
         self.tray_available = not disable_tray and QSystemTrayIcon.isSystemTrayAvailable()
         self.app.setQuitOnLastWindowClosed(False)
         self.window = ManagementWindow(config, tray_available=self.tray_available)
         self.notifications = NotificationManager(self)
-        self.socket = SocketBridge(self)
+        self.socket = SocketManager(self)
         self.tray: QSystemTrayIcon | None = None
         self.tray_menu: QMenu | None = None
         self.tray_status_action: QAction | None = None
@@ -63,16 +68,17 @@ class SignalDeskController(QObject):
             self.window.show()
 
     def _connect_signals(self) -> None:
-        self.window.reconnect_requested.connect(self._reconnect)
+        self.window.reconnect_requested.connect(self.socket.reconnect)
         self.window.subscriptions_changed.connect(self._update_subscriptions)
+        self.window.servers_changed.connect(self._servers_changed)
         self.window.test_requested.connect(self._request_test)
         self.window.quit_requested.connect(self.shutdown)
         self.notifications.activated.connect(self.window.show_and_activate)
 
         self.socket.state_changed.connect(self._connection_changed)
-        self.socket.health_updated.connect(self.window.set_health)
+        self.socket.health_updated.connect(self.window.set_server_health)
         self.socket.alert_received.connect(self._alert_received)
-        self.socket.catalog_received.connect(self.window.set_catalog)
+        self.socket.catalog_received.connect(self.window.set_server_catalog)
         self.socket.subscriptions_confirmed.connect(self.window.set_confirmed_subscriptions)
 
     def _create_tray(self) -> None:
@@ -89,8 +95,8 @@ class SignalDeskController(QObject):
         test_action = QAction("Send test alert", menu)
         test_action.triggered.connect(self._request_test)
         menu.addAction(test_action)
-        reconnect_action = QAction("Reconnect", menu)
-        reconnect_action.triggered.connect(lambda: self._reconnect(self.config.server_url))
+        reconnect_action = QAction("Reconnect all", menu)
+        reconnect_action.triggered.connect(self._reconnect_all)
         menu.addAction(reconnect_action)
         menu.addSeparator()
         quit_action = QAction("Quit SignalDesk", menu)
@@ -102,8 +108,19 @@ class SignalDeskController(QObject):
         self.tray.show()
 
     def start(self) -> None:
-        self.window.set_connection_state("connecting", f"Connecting to {self.config.server_url}")
-        self.socket.connect_server(self.config.server_url, self.config.subscriptions)
+        for server in self.config.servers:
+            self._states[server.url] = "connecting"
+            self.window.set_server_state(server.url, "connecting", f"Connecting to {server.url}")
+        self.socket.set_servers(self._server_payload())
+
+    def _server_payload(self) -> list[dict[str, object]]:
+        return [
+            {"url": server.url, "subscriptions": list(server.subscriptions)}
+            for server in self.config.servers
+        ]
+
+    def _any_connected(self) -> bool:
+        return any(state == "connected" for state in self._states.values())
 
     def _tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in {
@@ -112,54 +129,66 @@ class SignalDeskController(QObject):
         }:
             self.window.show_and_activate()
 
-    def _reconnect(self, endpoint: str) -> None:
-        try:
-            normalized = normalize_server_url(endpoint)
-        except ValueError as exc:
-            self.window.set_connection_state("disconnected", str(exc))
-            return
-        self.config.server_url = normalized
-        self.store.save(self.config)
-        self.socket.connect_server(normalized, self.config.subscriptions)
+    def _reconnect_all(self) -> None:
+        for url in list(self._states):
+            self.socket.reconnect(url)
 
-    def _update_subscriptions(self, subscriptions: Any) -> None:
+    def _servers_changed(self, servers: Any) -> None:
+        if not isinstance(servers, list):
+            return
+        clean = [item for item in servers if isinstance(item, ServerConfig)]
+        self.config.servers = clean
+        urls = {server.url for server in clean}
+        self._states = {url: self._states.get(url, "connecting") for url in urls}
+        self.store.save(self.config)
+        self.socket.set_servers(self._server_payload())
+        if not self._any_connected() and self._test_pending:
+            self._clear_test_pending()
+
+    def _update_subscriptions(self, url: str, subscriptions: Any) -> None:
         if not isinstance(subscriptions, list):
             return
-        self.config.subscriptions = sorted({str(item) for item in subscriptions})
+        cleaned = sorted({str(item) for item in subscriptions})
+        for server in self.config.servers:
+            if server.url == url:
+                server.subscriptions = cleaned
+                break
         self.store.save(self.config)
-        self.socket.update_subscriptions(self.config.subscriptions)
+        self.socket.update_subscriptions(url, cleaned)
 
     def _request_test(self) -> None:
-        if self._connected:
+        connected = [url for url, state in self._states.items() if state == "connected"]
+        if connected:
             if self._test_pending:
                 return
             self._test_pending = True
             self.window.set_test_pending(True)
             self._test_timeout.start(4500)
-            self.socket.request_test_alert()
+            for url in connected:
+                self.socket.request_test(url)
             return
-        alert = Alert(
-            id=str(uuid.uuid4()),
-            title="Local alert preview",
-            message="The notification UI is ready. Connect a server to test the socket path.",
-            severity=Severity.INFO,
-            channel="local-preview",
-            source="SignalDesk",
-            created_at=utc_now_iso(),
-            duration_ms=7000,
+        self._display_alert(
+            Alert(
+                id=str(uuid.uuid4()),
+                title="Local alert preview",
+                message="The notification UI is ready. Connect a server to test the socket path.",
+                severity=Severity.INFO,
+                channel="local-preview",
+                source="SignalDesk",
+                created_at=utc_now_iso(),
+                duration_ms=7000,
+            )
         )
-        self._display_alert(alert)
 
     def _test_timed_out(self) -> None:
         if not self._test_pending:
             return
-        self._test_pending = False
-        self.window.set_test_pending(False)
+        self._clear_test_pending()
         self._display_alert(
             Alert(
                 id=str(uuid.uuid4()),
                 title="Socket test timed out",
-                message="The server did not answer alert:test. Check its event handlers, then try again.",
+                message="No server answered alert:test. Check its event handlers, then try again.",
                 severity=Severity.WARNING,
                 channel="connection",
                 source="SignalDesk",
@@ -168,41 +197,42 @@ class SignalDeskController(QObject):
             )
         )
 
-    def _connection_changed(self, state: str, detail: str) -> None:
-        self._connected = state == "connected"
-        if not self._connected and self._test_pending:
-            self._test_pending = False
-            self._test_timeout.stop()
-            self.window.set_test_pending(False)
+    def _clear_test_pending(self) -> None:
+        self._test_pending = False
+        self._test_timeout.stop()
+        self.window.set_test_pending(False)
+
+    def _connection_changed(self, url: str, state: str, detail: str) -> None:
+        self._states[url] = state
         clean_detail = " ".join(detail.split()) if detail else "No connection details"
         if len(clean_detail) > 180:
             clean_detail = f"{clean_detail[:179]}…"
-        self.window.set_connection_state(state, clean_detail)
-        readable = {
-            "connected": "Connected",
-            "connecting": "Connecting",
-            "disconnected": "Offline",
-            "stopped": "Paused",
-        }.get(state, "Offline")
-        if self.tray is not None:
-            self.tray.setToolTip(f"SignalDesk — {readable}")
-        if self.tray_status_action is not None:
-            self.tray_status_action.setText(f"Status: {readable}")
+        self.window.set_server_state(url, state, clean_detail)
+        if not self._any_connected() and self._test_pending:
+            self._clear_test_pending()
+        self._refresh_tray_status()
 
-    def _alert_received(self, payload: Any) -> None:
+    def _refresh_tray_status(self) -> None:
+        total = len(self._states)
+        online = sum(1 for state in self._states.values() if state == "connected")
+        summary = f"{online}/{total} online" if total else "no servers"
+        if self.tray is not None:
+            self.tray.setToolTip(f"SignalDesk — {summary}")
+        if self.tray_status_action is not None:
+            self.tray_status_action.setText(f"Status: {summary}")
+
+    def _alert_received(self, url: str, payload: Any) -> None:
         try:
             alert = Alert.from_payload(payload)
         except (TypeError, ValueError) as exc:
             LOGGER.warning("Ignored malformed alert payload: %s", exc)
             return
         if self._test_pending:
-            self._test_pending = False
-            self._test_timeout.stop()
-            self.window.set_test_pending(False)
-        self._display_alert(alert)
+            self._clear_test_pending()
+        self._display_alert(alert, origin=_server_label(url))
 
-    def _display_alert(self, alert: Alert) -> None:
-        self.window.add_alert(alert)
+    def _display_alert(self, alert: Alert, origin: str = "") -> None:
+        self.window.add_alert(alert, origin)
         self.notifications.show_alert(alert)
 
     def shutdown(self) -> None:
@@ -255,9 +285,12 @@ def main(argv: list[str] | None = None) -> int:
     config = store.load()
     if args.server:
         try:
-            config.server_url = normalize_server_url(args.server)
+            url = normalize_server_url(args.server)
         except ValueError as exc:
             build_parser().error(str(exc))
+        # Override the endpoint but keep the previously subscribed channels.
+        prior_subs = list(config.servers[0].subscriptions) if config.servers else []
+        config.servers = [ServerConfig(url=url, subscriptions=prior_subs)]
         store.save(config)
 
     controller = SignalDeskController(

@@ -2,7 +2,13 @@ import json
 
 import pytest
 
-from signaldesk.config import AppConfig, ConfigStore, normalize_server_url
+from signaldesk.config import (
+    DEFAULT_SERVER_URL,
+    AppConfig,
+    ConfigStore,
+    ServerConfig,
+    normalize_server_url,
+)
 
 
 @pytest.mark.parametrize(
@@ -24,19 +30,22 @@ def test_normalize_server_url_rejects_unsafe_values() -> None:
         normalize_server_url("https://user:secret@example.com")
 
 
-def test_config_store_round_trip(tmp_path) -> None:
+def test_config_store_round_trip_multiple_servers(tmp_path) -> None:
     store = ConfigStore(tmp_path / "nested" / "config.json")
     expected = AppConfig(
-        server_url="https://alerts.example.com",
-        subscriptions=["billing", "security"],
+        servers=[
+            ServerConfig(url="https://alerts.example.com", subscriptions=["billing", "security"]),
+            ServerConfig(url="http://127.0.0.1:8765", subscriptions=["infrastructure"]),
+        ]
     )
 
     store.save(expected)
 
     assert store.load() == expected
-    assert json.loads(store.path.read_text(encoding="utf-8"))["subscriptions"] == [
-        "billing",
-        "security",
+    raw = json.loads(store.path.read_text(encoding="utf-8"))
+    assert [server["url"] for server in raw["servers"]] == [
+        "https://alerts.example.com",
+        "http://127.0.0.1:8765",
     ]
 
 
@@ -46,17 +55,33 @@ def test_config_store_recovers_from_invalid_json(tmp_path) -> None:
 
     config = ConfigStore(path).load()
 
-    assert config.server_url == "http://127.0.0.1:8765"
-    assert "infrastructure" in config.subscriptions
+    assert config.servers[0].url == DEFAULT_SERVER_URL
+    assert "infrastructure" in config.servers[0].subscriptions
 
 
-def test_config_mapping_filters_invalid_subscriptions() -> None:
+def test_config_migrates_legacy_single_server_layout() -> None:
     config = AppConfig.from_mapping(
         {
-            "server_url": "not a valid url",
+            "server_url": "wss://alerts.example.com",
             "subscriptions": ["security", "security", "../../bad", "deployments"],
         }
     )
 
-    assert config.server_url == "http://127.0.0.1:8765"
-    assert config.subscriptions == ["deployments", "security"]
+    assert len(config.servers) == 1
+    assert config.servers[0].url == "https://alerts.example.com"
+    assert config.servers[0].subscriptions == ["deployments", "security"]
+
+
+def test_config_deduplicates_servers_by_url() -> None:
+    config = AppConfig.from_mapping(
+        {
+            "servers": [
+                {"url": "http://a:1", "subscriptions": ["security"]},
+                {"url": "http://a:1", "subscriptions": ["billing"]},
+                {"url": "not a url"},
+            ]
+        }
+    )
+
+    assert [server.url for server in config.servers] == ["http://a:1"]
+    assert config.servers[0].subscriptions == ["security"]

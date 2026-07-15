@@ -1,4 +1,9 @@
-"""Small JSON-backed configuration store for SignalDesk."""
+"""Small JSON-backed configuration store for SignalDesk.
+
+The configuration is multi-server: the app can hold connections to several
+Socket.IO endpoints at once, each with its own channel subscriptions. Older
+single-server config files (``server_url`` + ``subscriptions``) are still read.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +11,7 @@ import json
 import os
 import sys
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -37,6 +42,18 @@ def normalize_server_url(value: object) -> str:
     return urlunsplit((scheme, parsed.netloc, path, parsed.query, ""))
 
 
+def clean_subscriptions(values: Any) -> list[str]:
+    """Return a sorted, de-duplicated list of valid channel keys."""
+    if not isinstance(values, list):
+        return list(DEFAULT_SUBSCRIPTIONS)
+    cleaned = {
+        normalize_channel(item, fallback="")
+        for item in values
+        if normalize_channel(item, fallback="")
+    }
+    return sorted(cleaned)
+
+
 def _default_config_path() -> Path:
     if sys.platform == "win32":
         root = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
@@ -48,28 +65,77 @@ def _default_config_path() -> Path:
 
 
 @dataclass(slots=True)
-class AppConfig:
-    server_url: str = DEFAULT_SERVER_URL
+class ServerConfig:
+    """A single Socket.IO endpoint and the channels subscribed on it."""
+
+    url: str = DEFAULT_SERVER_URL
     subscriptions: list[str] = field(default_factory=lambda: list(DEFAULT_SUBSCRIPTIONS))
+    name: str = ""
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> ServerConfig:
+        if not isinstance(value, Mapping):
+            raise ValueError("Server entry must be an object")
+        url = normalize_server_url(value.get("url"))
+        name = " ".join(str(value.get("name", "") or "").split())[:60]
+        return cls(
+            url=url,
+            subscriptions=clean_subscriptions(value.get("subscriptions", DEFAULT_SUBSCRIPTIONS)),
+            name=name,
+        )
+
+    def to_mapping(self) -> dict[str, Any]:
+        return {
+            "url": self.url,
+            "subscriptions": list(self.subscriptions),
+            "name": self.name,
+        }
+
+
+def _default_servers() -> list[ServerConfig]:
+    return [ServerConfig()]
+
+
+@dataclass(slots=True)
+class AppConfig:
+    servers: list[ServerConfig] = field(default_factory=_default_servers)
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> AppConfig:
-        try:
-            server_url = normalize_server_url(value.get("server_url"))
-        except ValueError:
-            server_url = DEFAULT_SERVER_URL
+        if not isinstance(value, Mapping):
+            return cls()
 
-        raw_subscriptions = value.get("subscriptions", DEFAULT_SUBSCRIPTIONS)
-        if not isinstance(raw_subscriptions, list):
-            raw_subscriptions = DEFAULT_SUBSCRIPTIONS
-        subscriptions = sorted(
-            {
-                normalize_channel(item, fallback="")
-                for item in raw_subscriptions
-                if normalize_channel(item, fallback="")
-            }
-        )
-        return cls(server_url=server_url, subscriptions=subscriptions)
+        entries: list[ServerConfig] = []
+        raw_servers = value.get("servers")
+        if isinstance(raw_servers, list):
+            for item in raw_servers:
+                try:
+                    entries.append(ServerConfig.from_mapping(item))
+                except (ValueError, TypeError):
+                    continue
+        else:
+            # Legacy single-server layout: {"server_url": ..., "subscriptions": [...]}.
+            try:
+                url = normalize_server_url(value.get("server_url"))
+            except ValueError:
+                url = DEFAULT_SERVER_URL
+            entries.append(
+                ServerConfig(
+                    url=url,
+                    subscriptions=clean_subscriptions(
+                        value.get("subscriptions", DEFAULT_SUBSCRIPTIONS)
+                    ),
+                )
+            )
+
+        # De-duplicate by URL, preserving first occurrence; never end up empty.
+        by_url: dict[str, ServerConfig] = {}
+        for entry in entries:
+            by_url.setdefault(entry.url, entry)
+        return cls(servers=list(by_url.values()) or _default_servers())
+
+    def to_mapping(self) -> dict[str, Any]:
+        return {"servers": [server.to_mapping() for server in self.servers]}
 
 
 class ConfigStore:
@@ -89,7 +155,7 @@ class ConfigStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(".tmp")
         temporary.write_text(
-            json.dumps(asdict(config), indent=2, sort_keys=True) + "\n",
+            json.dumps(config.to_mapping(), indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
         temporary.replace(self.path)

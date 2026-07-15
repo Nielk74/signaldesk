@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 import itertools
 import json
 import logging
@@ -69,7 +70,10 @@ DEMO_ALERTS = [
 class MockAlertServer:
     def __init__(self, *, demo: bool = False, demo_interval: float = 8.0) -> None:
         self.sio = socketio.AsyncServer(async_mode="asgi", logger=False, engineio_logger=False)
+        # sid -> subscribed channels (source of truth for /health and cleanup).
         self.clients: dict[str, set[str]] = {}
+        # channel -> subscribed sids (reverse index for O(1) delivery counts).
+        self._members: dict[str, set[str]] = {}
         self.demo = demo
         self.demo_interval = max(2.0, demo_interval)
         self._demo_task: asyncio.Task[None] | None = None
@@ -81,12 +85,12 @@ class MockAlertServer:
         async def connect(sid: str, environ: dict[str, Any], auth: Any = None) -> None:
             del environ
             supplied = auth.get("subscriptions") if isinstance(auth, dict) else None
-            subscriptions = self._filter_subscriptions(
+            requested = (
                 supplied
                 if isinstance(supplied, list)
                 else ["infrastructure", "security", "deployments"]
             )
-            self.clients[sid] = subscriptions
+            subscriptions = await self._apply_subscriptions(sid, requested)
             LOGGER.info("Client connected: %s", sid)
             await self.sio.emit("catalog", self.catalog_payload(), to=sid)
             await self.sio.emit(
@@ -101,14 +105,18 @@ class MockAlertServer:
 
         @self.sio.event
         async def disconnect(sid: str, reason: Any = None) -> None:
-            self.clients.pop(sid, None)
+            for channel in self.clients.pop(sid, set()):
+                members = self._members.get(channel)
+                if members is not None:
+                    members.discard(sid)
+                    if not members:
+                        self._members.pop(channel, None)
             LOGGER.info("Client disconnected: %s (%s)", sid, reason or "unknown")
 
         @self.sio.on("subscriptions:update")
         async def update_subscriptions(sid: str, data: Any) -> dict[str, Any]:
             supplied = data.get("subscriptions", []) if isinstance(data, dict) else []
-            subscriptions = self._filter_subscriptions(supplied)
-            self.clients[sid] = subscriptions
+            subscriptions = await self._apply_subscriptions(sid, supplied)
             payload = {"subscriptions": sorted(subscriptions)}
             await self.sio.emit("subscriptions:confirmed", payload, to=sid)
             return payload
@@ -140,6 +148,33 @@ class MockAlertServer:
             await self.sio.emit("alert", alert.to_payload(), to=sid)
             return {"ok": True, "id": alert.id}
 
+    async def _apply_subscriptions(self, sid: str, requested: Any) -> set[str]:
+        """Reconcile a client's channel rooms with its requested subscriptions."""
+        channels = self._filter_subscriptions(requested)
+        previous = self.clients.get(sid, set())
+        for channel in previous - channels:
+            members = self._members.get(channel)
+            if members is not None:
+                members.discard(sid)
+                if not members:
+                    self._members.pop(channel, None)
+            await self._leave_room(sid, channel)
+        for channel in channels - previous:
+            self._members.setdefault(channel, set()).add(sid)
+            await self._enter_room(sid, channel)
+        self.clients[sid] = channels
+        return channels
+
+    async def _enter_room(self, sid: str, channel: str) -> None:
+        result = self.sio.enter_room(sid, channel)
+        if inspect.isawaitable(result):
+            await result
+
+    async def _leave_room(self, sid: str, channel: str) -> None:
+        result = self.sio.leave_room(sid, channel)
+        if inspect.isawaitable(result):
+            await result
+
     @staticmethod
     def _filter_subscriptions(values: Any) -> set[str]:
         allowed = {channel.key for channel in CHANNELS}
@@ -161,12 +196,15 @@ class MockAlertServer:
         }
 
     async def publish(self, alert: Alert) -> int:
-        delivered = 0
-        for sid, subscriptions in list(self.clients.items()):
-            if alert.channel not in subscriptions:
-                continue
-            await self.sio.emit("alert", alert.to_payload(), to=sid)
-            delivered += 1
+        """Fan an alert out to every subscriber of its channel in one emit.
+
+        Delivery uses the channel room, so cost is a single ``emit`` regardless
+        of subscriber count rather than one round-trip per client.
+        """
+        members = self._members.get(alert.channel)
+        delivered = len(members) if members else 0
+        if delivered:
+            await self.sio.emit("alert", alert.to_payload(), room=alert.channel)
         LOGGER.info("Published %s alert to %d client(s)", alert.channel, delivered)
         return delivered
 

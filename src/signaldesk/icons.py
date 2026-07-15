@@ -17,6 +17,20 @@ def _rounded_pen(value: QColor | str, width: float) -> QPen:
     return pen
 
 
+def _chamfered_path(rect: QRectF, cut: float, *, cut_bottom_left: bool = False) -> QPainterPath:
+    path = QPainterPath(QPointF(rect.left(), rect.top()))
+    path.lineTo(rect.right() - cut, rect.top())
+    path.lineTo(rect.right(), rect.top() + cut)
+    path.lineTo(rect.right(), rect.bottom())
+    if cut_bottom_left:
+        path.lineTo(rect.left() + cut, rect.bottom())
+        path.lineTo(rect.left(), rect.bottom() - cut)
+    else:
+        path.lineTo(rect.left(), rect.bottom())
+    path.closeSubpath()
+    return path
+
+
 def make_app_icon() -> QIcon:
     icon = QIcon()
     for size in (16, 20, 24, 32, 48, 64, 128, 256):
@@ -27,10 +41,12 @@ def make_app_icon() -> QIcon:
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(COLORS["primary"]))
         inset = max(1.0, size * 0.04)
-        painter.drawRoundedRect(
-            QRectF(inset, inset, size - inset * 2, size - inset * 2),
-            size * 0.25,
-            size * 0.25,
+        painter.drawPath(
+            _chamfered_path(
+                QRectF(inset, inset, size - inset * 2, size - inset * 2),
+                size * 0.14,
+                cut_bottom_left=True,
+            )
         )
 
         path = QPainterPath(QPointF(size * 0.20, size * 0.54))
@@ -80,10 +96,15 @@ class SeverityIcon(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         accent = QColor(SEVERITY_COLORS[self.severity.value])
         backdrop = QColor(accent)
-        backdrop.setAlpha(35)
+        backdrop.setAlpha(30)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(backdrop)
-        painter.drawEllipse(QRectF(0, 0, self._size, self._size))
+        painter.drawPath(
+            _chamfered_path(
+                QRectF(0, 0, self._size, self._size),
+                max(4.0, self._size * 0.16),
+            )
+        )
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.setPen(_rounded_pen(accent, max(1.8, self._size * 0.065)))
 
