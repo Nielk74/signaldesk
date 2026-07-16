@@ -517,9 +517,7 @@ class AlertStore:
         selected_statuses = _filter_items(status)
         if selected_statuses:
             include_informational = "informational" in selected_statuses
-            lifecycle_statuses = [
-                item for item in selected_statuses if item != "informational"
-            ]
+            lifecycle_statuses = [item for item in selected_statuses if item != "informational"]
             if AlertLifecycle.UNREAD.value in lifecycle_statuses:
                 lifecycle_statuses.extend(
                     [AlertLifecycle.ACKNOWLEDGED.value, AlertLifecycle.RESOLVED.value]
@@ -530,9 +528,7 @@ class AlertStore:
                 status_clauses.append("requires_attention = 0")
             if lifecycle_statuses:
                 placeholders = ", ".join("?" for _ in lifecycle_statuses)
-                status_clauses.append(
-                    f"(requires_attention = 1 AND lifecycle IN ({placeholders}))"
-                )
+                status_clauses.append(f"(requires_attention = 1 AND lifecycle IN ({placeholders}))")
                 parameters.extend(lifecycle_statuses)
             clauses.append("(" + " OR ".join(status_clauses) + ")")
 
@@ -656,10 +652,7 @@ class AlertStore:
             AlertLifecycle.ACKNOWLEDGED.value,
             AlertLifecycle.RESOLVED.value,
         )
-        sql = (
-            "SELECT COUNT(*) FROM alerts WHERE requires_attention = 1 "
-            "AND lifecycle IN (?, ?, ?)"
-        )
+        sql = "SELECT COUNT(*) FROM alerts WHERE requires_attention = 1 AND lifecycle IN (?, ?, ?)"
         parameters: list[Any] = list(active_values)
         if server_url is not None:
             sql += " AND server_url = ?"

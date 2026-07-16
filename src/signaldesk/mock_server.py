@@ -105,9 +105,7 @@ def token_is_authorized(required_token: str | None, supplied_token: object) -> b
     """Check optional token auth with a timing-safe comparison when enabled."""
     if required_token is None:
         return True
-    return isinstance(supplied_token, str) and hmac.compare_digest(
-        supplied_token, required_token
-    )
+    return isinstance(supplied_token, str) and hmac.compare_digest(supplied_token, required_token)
 
 
 def build_recovery_batch(
@@ -120,11 +118,7 @@ def build_recovery_batch(
     cursor = normalize_resume_after(resume_after)
     first_sequence = normalize_resume_after(events[0].get("sequence")) if events else None
     oldest_available = first_sequence if first_sequence is not None else latest_sequence + 1
-    gap = (
-        cursor is not None
-        and latest_sequence > cursor
-        and cursor < oldest_available - 1
-    )
+    gap = cursor is not None and latest_sequence > cursor and cursor < oldest_available - 1
     recovered: list[dict[str, Any]] = []
     if cursor is not None:
         for event in events:

@@ -11,9 +11,7 @@ from signaldesk.socket_client import (
 
 
 def test_auth_payload_omits_absent_optional_fields() -> None:
-    assert build_auth_payload({"security", "billing"}) == {
-        "subscriptions": ["billing", "security"]
-    }
+    assert build_auth_payload({"security", "billing"}) == {"subscriptions": ["billing", "security"]}
 
 
 def test_auth_payload_includes_recovery_token_and_client_identity() -> None:

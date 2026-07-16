@@ -223,12 +223,8 @@ def test_lifecycle_validation_and_confirmation(monkeypatch) -> None:
     unknown = asyncio.run(handler("sid", {"id": "missing", "status": "unread"}))
     assert unknown == {"ok": False, "error": "Alert was not found"}
 
-    server._event_log.append(
-        {"id": "info-1", "channel": "security", "sequence": 2}
-    )
-    informational = asyncio.run(
-        handler("sid", {"id": "info-1", "status": "unread"})
-    )
+    server._event_log.append({"id": "info-1", "channel": "security", "sequence": 2})
+    informational = asyncio.run(handler("sid", {"id": "info-1", "status": "unread"}))
     assert informational == {
         "ok": False,
         "error": "This alert does not allow reminders",
@@ -237,8 +233,6 @@ def test_lifecycle_validation_and_confirmation(monkeypatch) -> None:
 
 def test_lifecycle_rejects_invalid_snooze_timestamp() -> None:
     with pytest.raises(ValueError, match="ISO-8601"):
-        validate_lifecycle_payload(
-            {"id": "a-1", "status": "snoozed", "snoozed_until": "later"}
-        )
+        validate_lifecycle_payload({"id": "a-1", "status": "snoozed", "snoozed_until": "later"})
     with pytest.raises(ValueError, match="required"):
         validate_lifecycle_payload({"id": "a-1", "status": "snoozed"})

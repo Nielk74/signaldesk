@@ -155,9 +155,7 @@ def test_offline_reminder_is_queued_flushed_and_confirmed(
     assert controller.socket.lifecycle_calls == []
 
     controller._connection_changed(url, "connected", "Websocket")
-    assert controller.socket.lifecycle_calls == [
-        (url, "incident", "snoozed", remind_at, None)
-    ]
+    assert controller.socket.lifecycle_calls == [(url, "incident", "snoozed", remind_at, None)]
 
     controller._lifecycle_confirmed(
         url,

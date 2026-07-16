@@ -94,9 +94,7 @@ def test_alert_structured_fields_are_validated_and_round_trip() -> None:
 
 def test_attention_lifecycle_is_server_opt_in_and_explicit_false_wins() -> None:
     informational = Alert.from_payload({"title": "Release complete"})
-    attention = Alert.from_payload(
-        {"title": "Database unavailable", "requires_attention": True}
-    )
+    attention = Alert.from_payload({"title": "Database unavailable", "requires_attention": True})
     explicitly_informational = Alert.from_payload(
         {
             "title": "For reference",

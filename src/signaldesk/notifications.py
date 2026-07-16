@@ -445,9 +445,7 @@ class AlertToast(QWidget):
         layout.addWidget(shell, 1)
 
     def _request_snooze(self) -> None:
-        if not self._commit_quick_action(
-            "Reminder set for 15 minutes.", self.snooze_button
-        ):
+        if not self._commit_quick_action("Reminder set for 15 minutes.", self.snooze_button):
             return
         remind_at = datetime.now(UTC) + timedelta(minutes=15)
         snoozed_until = remind_at.isoformat().replace("+00:00", "Z")
@@ -656,9 +654,7 @@ class NotificationOverflowIndicator(QPushButton):
         suffix = "alert" if count == 1 else "alerts"
         label = f"+{count:,} more {suffix}" if count <= 9999 else "9,999+ more alerts"
         self.setText(label)
-        self.setAccessibleName(
-            f"{count} additional {suffix} received; open alert history"
-        )
+        self.setAccessibleName(f"{count} additional {suffix} received; open alert history")
 
     def show_at(self, target: QPoint) -> None:
         self.move(target)

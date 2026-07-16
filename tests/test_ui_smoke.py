@@ -127,9 +127,7 @@ def test_server_channel_rows_come_only_from_each_server_catalog() -> None:
     assert list(first._rows) == ["service-health", "release-notes"]
     assert "infrastructure" not in first._rows
     assert first._rows["service-health"].channel.name == "Service health"
-    row_text = {
-        label.text() for label in first._rows["service-health"].findChildren(QLabel)
-    }
+    row_text = {label.text() for label in first._rows["service-health"].findChildren(QLabel)}
     assert {"Service health", "Availability and capacity signals"}.issubset(row_text)
     assert first.count_label.text() == "1 selected"
     assert second._rows == {}
@@ -238,9 +236,7 @@ def test_compact_icon_actions_and_progressive_disclosure() -> None:
     assert window.advanced_policy_button.text() == "More settings..."
 
     icon_buttons = [
-        button
-        for button in window.findChildren(QPushButton)
-        if button.objectName() == "IconButton"
+        button for button in window.findChildren(QPushButton) if button.objectName() == "IconButton"
     ]
     assert icon_buttons
     assert all(button.text() == "" for button in icon_buttons)
@@ -382,9 +378,7 @@ def test_history_filters_keyboard_detail_and_lifecycle_signals() -> None:
     assert "notifications are paused" in dialog.reminder_explanation.text().lower()
     assert not dialog.status_feedback.isHidden()
     action_button = next(
-        button
-        for button in dialog.findChildren(QPushButton)
-        if button.text() == "Open runbook"
+        button for button in dialog.findChildren(QPushButton) if button.text() == "Open runbook"
     )
     action_button.click()
     assert actions[-1][2]["url"] == "https://example.com/runbook"
@@ -406,9 +400,7 @@ def test_alerts_without_reminders_have_no_classification_or_controls() -> None:
     record = {"server_url": "https://alerts.example.com", "alert": alert}
 
     row = AlertHistoryRow(record)
-    assert not any(
-        label.objectName() == "StatusBadge" for label in row.findChildren(QLabel)
-    )
+    assert not any(label.objectName() == "StatusBadge" for label in row.findChildren(QLabel))
     assert "informational" not in row.accessibleName().lower()
     assert "attention" not in row.accessibleName().lower()
 
@@ -626,9 +618,7 @@ def test_toast_and_manager_forward_actionable_identity(monkeypatch) -> None:
     assert toast.height() == original_height
 
     action_button = next(
-        button
-        for button in toast.findChildren(QPushButton)
-        if button.text() == "Open dashboard"
+        button for button in toast.findChildren(QPushButton) if button.text() == "Open dashboard"
     )
     action_button.click()
     assert actions[-1][:2] == ("https://alerts.example.com", "actionable-1")
@@ -696,8 +686,8 @@ def test_toast_quick_reminder_snoozes_for_fifteen_minutes(monkeypatch) -> None:
         "snoozed",
     )
     remind_at = datetime.fromisoformat(str(changes[-1][3]).replace("Z", "+00:00"))
-    assert timedelta(minutes=14, seconds=59) <= remind_at - before <= timedelta(
-        minutes=15, seconds=1
+    assert (
+        timedelta(minutes=14, seconds=59) <= remind_at - before <= timedelta(minutes=15, seconds=1)
     )
     assert QToolTip.text() == "Reminder set for 15 minutes."
     assert not toast._dismissing
@@ -803,9 +793,7 @@ def test_large_history_uses_bounded_pages_instead_of_eager_widgets() -> None:
     app.processEvents()
 
     assert len(window._history_rows) == HISTORY_PAGE_SIZE
-    assert window.history_page_label.text() == (
-        f"1–{HISTORY_PAGE_SIZE} of {len(records)}"
-    )
+    assert window.history_page_label.text() == (f"1–{HISTORY_PAGE_SIZE} of {len(records)}")
     assert window._history_rows[0].record is records[0]
 
     window.history_next_button.click()

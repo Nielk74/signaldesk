@@ -90,9 +90,7 @@ class SignalDeskController(QObject):
         self._states: dict[str, str] = {server.url: "connecting" for server in config.servers}
         self._last_connected: dict[str, str] = {}
         self._requested_cursors: dict[str, int | None] = {}
-        self._pending_lifecycle: dict[
-            tuple[str, str], tuple[str, str | None, str | None]
-        ] = {}
+        self._pending_lifecycle: dict[tuple[str, str], tuple[str, str | None, str | None]] = {}
         self._history_filters: dict[str, str] = {}
         self._last_snooze_check = 0.0
 
@@ -691,9 +689,7 @@ class SignalDeskController(QObject):
             )
             return
         try:
-            supplied_lifecycle = AlertLifecycle(
-                str(payload.get("status", "")).strip().lower()
-            )
+            supplied_lifecycle = AlertLifecycle(str(payload.get("status", "")).strip().lower())
         except ValueError:
             return
         lifecycle = AlertLifecycle.parse(supplied_lifecycle)

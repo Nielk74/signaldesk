@@ -524,8 +524,7 @@ class AlertDetailDialog(QDialog):
         heading_text = QVBoxLayout()
         heading_text.setSpacing(3)
         kicker = QLabel(
-            f"{_string_value(self.alert.severity, 'info').upper()} / "
-            f"{self.alert.channel.upper()}"
+            f"{_string_value(self.alert.severity, 'info').upper()} / {self.alert.channel.upper()}"
         )
         kicker.setProperty("role", "eyebrow")
         title = QLabel(self.alert.title)
@@ -595,7 +594,9 @@ class AlertDetailDialog(QDialog):
             for action in actions:
                 button = QPushButton(action["label"])
                 button.setObjectName(
-                    "PrimaryButton" if action["kind"] in {"primary", "runbook"} else "SecondaryButton"
+                    "PrimaryButton"
+                    if action["kind"] in {"primary", "runbook"}
+                    else "SecondaryButton"
                 )
                 button.setMinimumHeight(44)
                 button.setAccessibleName(f"{action['label']}, opens an external alert action")
@@ -649,9 +650,7 @@ class AlertDetailDialog(QDialog):
             self.snooze_button.setObjectName("SecondaryButton")
             self.snooze_button.setMinimumHeight(44)
             self.snooze_button.setAccessibleName("Set a reminder for this alert")
-            self.snooze_button.setIcon(
-                make_line_icon("clock", COLORS["text_secondary"], 18)
-            )
+            self.snooze_button.setIcon(make_line_icon("clock", COLORS["text_secondary"], 18))
             self.snooze_button.setIconSize(QSize(18, 18))
             self.snooze_button.clicked.connect(self._request_snooze)
             reminder_row.addWidget(self.snooze_button)
@@ -760,9 +759,7 @@ class AlertDetailDialog(QDialog):
 
     def _request_snooze(self) -> None:
         seconds = int(self.snooze_preset.currentData() or 15 * 60)
-        until = (datetime.now(UTC) + timedelta(seconds=seconds)).isoformat().replace(
-            "+00:00", "Z"
-        )
+        until = (datetime.now(UTC) + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
         self._request_lifecycle("snoozed", until)
 
 
@@ -1378,9 +1375,7 @@ class DeliveryPolicyRow(QFrame):
 class PolicyOverrideRow(QFrame):
     removed = Signal(str, str)
 
-    def __init__(
-        self, scope: str, value: str, mode: str, parent: QWidget | None = None
-    ) -> None:
+    def __init__(self, scope: str, value: str, mode: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.scope = scope
         self.value = value
@@ -1735,8 +1730,7 @@ class ManagementWindow(QMainWindow):
         combo_row.setSpacing(8)
         self.severity_filter = self._history_combo(
             "Filter alert history by severity",
-            [("All severities", "")]
-            + [(severity.title(), severity) for severity in SEVERITIES],
+            [("All severities", "")] + [(severity.title(), severity) for severity in SEVERITIES],
         )
         self.server_filter = self._history_combo(
             "Filter alert history by server", [("All servers", "")]
@@ -1780,9 +1774,7 @@ class ManagementWindow(QMainWindow):
         self.clear_history_button.clicked.connect(self._confirm_clear_history)
         controls.addWidget(self.clear_history_button)
         self.history_maintenance_panel.hide()
-        self.history_maintenance_button.toggled.connect(
-            self._toggle_history_maintenance_panel
-        )
+        self.history_maintenance_button.toggled.connect(self._toggle_history_maintenance_panel)
         filter_layout.addWidget(self.history_maintenance_panel)
         layout.addWidget(filters)
 
@@ -2021,9 +2013,7 @@ class ManagementWindow(QMainWindow):
         quiet_layout.addLayout(time_row)
         self.critical_bypass = QCheckBox("Critical alerts bypass quiet hours")
         self.critical_bypass.setAccessibleName("Allow critical alerts during quiet hours")
-        self.critical_bypass.setChecked(
-            bool(self._initial_policy.get("critical_bypass", True))
-        )
+        self.critical_bypass.setChecked(bool(self._initial_policy.get("critical_bypass", True)))
         quiet_layout.addWidget(self.critical_bypass)
         advanced_layout.addWidget(quiet)
 
@@ -2032,9 +2022,7 @@ class ManagementWindow(QMainWindow):
         repeat_layout.setContentsMargins(14, 14, 14, 14)
         repeat_layout.setSpacing(8)
         self.group_repeats = QCheckBox("Group matching repeats during the cooldown")
-        self.group_repeats.setChecked(
-            bool(self._initial_policy.get("group_repeats", True))
-        )
+        self.group_repeats.setChecked(bool(self._initial_policy.get("group_repeats", True)))
         self.group_repeats.setAccessibleName("Group repeated matching alerts")
         repeat_layout.addWidget(self.group_repeats)
         cooldown_row = QHBoxLayout()
@@ -2042,9 +2030,7 @@ class ManagementWindow(QMainWindow):
         self.cooldown_spin = QSpinBox()
         self.cooldown_spin.setRange(0, 3600)
         self.cooldown_spin.setSuffix(" seconds")
-        self.cooldown_spin.setValue(
-            int(self._initial_policy.get("cooldown_seconds", 30) or 0)
-        )
+        self.cooldown_spin.setValue(int(self._initial_policy.get("cooldown_seconds", 30) or 0))
         self.cooldown_spin.setAccessibleName("Repeated alert cooldown in seconds")
         self.cooldown_spin.setMinimumHeight(44)
         cooldown_row.addWidget(self.cooldown_spin)
@@ -2442,9 +2428,7 @@ class ManagementWindow(QMainWindow):
                     "window is hidden."
                 )
         total = len(self._history_records)
-        self.history_count.setText(
-            f"{len(matches)} of {total}" if active else f"{total} received"
-        )
+        self.history_count.setText(f"{len(matches)} of {total}" if active else f"{total} received")
         self.overview_inbox_summary.setText(_inbox_summary(total))
         self.export_history_button.setDisabled(not matches)
         if len(matches) > HISTORY_PAGE_SIZE:
@@ -2522,9 +2506,7 @@ class ManagementWindow(QMainWindow):
             if visible
             else "Show advanced noise-control and reliability settings"
         )
-        self.advanced_policy_button.setText(
-            "Fewer settings..." if visible else "More settings..."
-        )
+        self.advanced_policy_button.setText("Fewer settings..." if visible else "More settings...")
         self.advanced_policy_button.setToolTip(label)
         self.advanced_policy_button.setAccessibleName(label)
 
@@ -2544,9 +2526,7 @@ class ManagementWindow(QMainWindow):
             "quiet_start": self.quiet_start.time().toString("HH:mm"),
             "quiet_end": self.quiet_end.time().toString("HH:mm"),
             "critical_bypass": self.critical_bypass.isChecked(),
-            "cooldown_seconds": self.cooldown_spin.value()
-            if self.group_repeats.isChecked()
-            else 0,
+            "cooldown_seconds": self.cooldown_spin.value() if self.group_repeats.isChecked() else 0,
             "group_repeats": self.group_repeats.isChecked(),
         }
 
@@ -2752,9 +2732,7 @@ class ManagementWindow(QMainWindow):
                 offline_since=offline_since,
             )
 
-    def set_server_auth_status(
-        self, url: str, stored: bool, secure_available: bool = True
-    ) -> None:
+    def set_server_auth_status(self, url: str, stored: bool, secure_available: bool = True) -> None:
         if url not in self._auth_enabled:
             return
         self._auth_enabled[url] = bool(stored)

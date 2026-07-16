@@ -189,7 +189,9 @@ def make_line_icon(name: str, color: str = COLORS["text_secondary"], size: int =
         painter.drawLine(QPointF(size * 0.61, size * 0.60), QPointF(size * 0.82, size * 0.81))
         painter.drawLine(QPointF(size * 0.82, size * 0.60), QPointF(size * 0.61, size * 0.81))
     elif name == "reset":
-        painter.drawArc(QRectF(size * 0.23, size * 0.23, size * 0.54, size * 0.54), 40 * 16, 275 * 16)
+        painter.drawArc(
+            QRectF(size * 0.23, size * 0.23, size * 0.54, size * 0.54), 40 * 16, 275 * 16
+        )
         painter.drawLine(QPointF(size * 0.23, size * 0.23), QPointF(size * 0.40, size * 0.23))
         painter.drawLine(QPointF(size * 0.23, size * 0.23), QPointF(size * 0.23, size * 0.40))
     elif name == "export":
@@ -205,7 +207,9 @@ def make_line_icon(name: str, color: str = COLORS["text_secondary"], size: int =
         for y, x in ((0.31, 0.40), (0.50, 0.62), (0.69, 0.46)):
             painter.drawLine(QPointF(size * 0.22, size * y), QPointF(size * 0.78, size * y))
             painter.setBrush(QColor(COLORS["surface"]))
-            painter.drawEllipse(QRectF(size * (x - 0.07), size * (y - 0.07), size * 0.14, size * 0.14))
+            painter.drawEllipse(
+                QRectF(size * (x - 0.07), size * (y - 0.07), size * 0.14, size * 0.14)
+            )
             painter.setBrush(Qt.BrushStyle.NoBrush)
     elif name in {"volume", "volume_off"}:
         speaker = QPainterPath(QPointF(size * 0.22, size * 0.43))
@@ -217,7 +221,9 @@ def make_line_icon(name: str, color: str = COLORS["text_secondary"], size: int =
         speaker.closeSubpath()
         painter.drawPath(speaker)
         if name == "volume":
-            painter.drawArc(QRectF(size * 0.43, size * 0.31, size * 0.32, size * 0.38), -55 * 16, 110 * 16)
+            painter.drawArc(
+                QRectF(size * 0.43, size * 0.31, size * 0.32, size * 0.38), -55 * 16, 110 * 16
+            )
         else:
             painter.drawLine(QPointF(size * 0.62, size * 0.36), QPointF(size * 0.80, size * 0.64))
             painter.drawLine(QPointF(size * 0.80, size * 0.36), QPointF(size * 0.62, size * 0.64))
@@ -232,7 +238,9 @@ def make_line_icon(name: str, color: str = COLORS["text_secondary"], size: int =
         painter.drawLine(QPointF(size * 0.64, size * 0.44), QPointF(size * 0.50, size * 0.58))
     elif name == "power":
         painter.drawLine(QPointF(size * 0.50, size * 0.18), QPointF(size * 0.50, size * 0.51))
-        painter.drawArc(QRectF(size * 0.23, size * 0.24, size * 0.54, size * 0.56), -45 * 16, -270 * 16)
+        painter.drawArc(
+            QRectF(size * 0.23, size * 0.24, size * 0.54, size * 0.56), -45 * 16, -270 * 16
+        )
     elif name == "clock":
         painter.drawEllipse(QRectF(size * 0.22, size * 0.22, size * 0.56, size * 0.56))
         painter.drawLine(QPointF(size * 0.50, size * 0.32), QPointF(size * 0.50, size * 0.52))

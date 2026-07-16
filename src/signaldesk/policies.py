@@ -219,9 +219,7 @@ class NotificationPolicyEngine:
             else:
                 self._recent[fingerprint] = (clock, 1)
             cutoff = clock - max(cooldown * 2, 60)
-            self._recent = {
-                key: value for key, value in self._recent.items() if value[0] >= cutoff
-            }
+            self._recent = {key: value for key, value in self._recent.items() if value[0] >= cutoff}
 
         return NotificationDecision(
             record=True,

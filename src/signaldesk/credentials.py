@@ -102,7 +102,9 @@ def _secure_backend() -> Any:
     identity = f"{type(backend).__module__}.{type(backend).__qualname__}".lower()
     if "chainer" in identity:
         candidates = getattr(backend, "backends", ())
-        backend = next((candidate for candidate in candidates if _backend_is_secure(candidate)), None)
+        backend = next(
+            (candidate for candidate in candidates if _backend_is_secure(candidate)), None
+        )
     if backend is None or not _backend_is_secure(backend):
         raise CredentialUnavailable("No secure system credential-store backend is available")
     return backend

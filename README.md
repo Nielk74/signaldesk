@@ -252,8 +252,9 @@ tests/               Unit, UI smoke, protocol, and controller integration tests
 ## Development
 
 ```powershell
-pytest
 ruff check .
+ruff format --check .
+pytest
 ```
 
 To temporarily override the first saved endpoint:
