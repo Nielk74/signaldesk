@@ -29,6 +29,7 @@ classifiers = [
   "Topic :: System :: Monitoring",
 ]
 dependencies = [
+  "keyring>=25,<26",
   "PySide6>=6.8,<7",
   "python-socketio[client]>=5.12,<6",
   "uvicorn[standard]>=0.34,<1",

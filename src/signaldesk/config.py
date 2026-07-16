@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,9 +18,19 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from signaldesk.models import normalize_channel
+from signaldesk.policies import NoisePolicy
 
 DEFAULT_SERVER_URL = "http://127.0.0.1:8765"
 DEFAULT_SUBSCRIPTIONS = ["infrastructure", "security", "deployments"]
+
+# Per-severity alert sound ids (a built-in name, "none", or a .wav path).
+SEVERITIES = ("info", "success", "warning", "critical")
+DEFAULT_SOUNDS = {
+    "info": "ping",
+    "success": "chime",
+    "warning": "alert",
+    "critical": "siren",
+}
 
 
 def normalize_server_url(value: object) -> str:
@@ -54,14 +65,29 @@ def clean_subscriptions(values: Any) -> list[str]:
     return sorted(cleaned)
 
 
-def _default_config_path() -> Path:
+def app_data_dir() -> Path:
     if sys.platform == "win32":
         root = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
     elif sys.platform == "darwin":
         root = Path.home() / "Library" / "Application Support"
     else:
         root = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    return root / "SignalDesk" / "config.json"
+    return root / "SignalDesk"
+
+
+def _default_config_path() -> Path:
+    return app_data_dir() / "config.json"
+
+
+def clean_sounds(values: Any) -> dict[str, str]:
+    """Return a per-severity sound map, filling missing entries with defaults."""
+    result = dict(DEFAULT_SOUNDS)
+    if isinstance(values, dict):
+        for severity in SEVERITIES:
+            chosen = values.get(severity)
+            if isinstance(chosen, str) and chosen:
+                result[severity] = chosen
+    return result
 
 
 @dataclass(slots=True)
@@ -71,6 +97,7 @@ class ServerConfig:
     url: str = DEFAULT_SERVER_URL
     subscriptions: list[str] = field(default_factory=lambda: list(DEFAULT_SUBSCRIPTIONS))
     name: str = ""
+    auth_enabled: bool = False
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> ServerConfig:
@@ -82,6 +109,7 @@ class ServerConfig:
             url=url,
             subscriptions=clean_subscriptions(value.get("subscriptions", DEFAULT_SUBSCRIPTIONS)),
             name=name,
+            auth_enabled=bool(value.get("auth_enabled", False)),
         )
 
     def to_mapping(self) -> dict[str, Any]:
@@ -89,6 +117,7 @@ class ServerConfig:
             "url": self.url,
             "subscriptions": list(self.subscriptions),
             "name": self.name,
+            "auth_enabled": self.auth_enabled,
         }
 
 
@@ -99,6 +128,14 @@ def _default_servers() -> list[ServerConfig]:
 @dataclass(slots=True)
 class AppConfig:
     servers: list[ServerConfig] = field(default_factory=_default_servers)
+    sound_enabled: bool = True
+    sounds: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_SOUNDS))
+    noise_policy: NoisePolicy = field(default_factory=NoisePolicy)
+    retention_days: int = 30
+    max_history: int = 5000
+    launch_at_login: bool = False
+    disconnect_warning_seconds: int = 30
+    client_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> AppConfig:
@@ -132,10 +169,47 @@ class AppConfig:
         by_url: dict[str, ServerConfig] = {}
         for entry in entries:
             by_url.setdefault(entry.url, entry)
-        return cls(servers=list(by_url.values()) or _default_servers())
+        return cls(
+            servers=list(by_url.values()) or _default_servers(),
+            sound_enabled=bool(value.get("sound_enabled", True)),
+            sounds=clean_sounds(value.get("sounds")),
+            noise_policy=NoisePolicy.from_mapping(value.get("noise_policy")),
+            retention_days=_bounded_int(value.get("retention_days"), 30, 1, 3650),
+            max_history=_bounded_int(value.get("max_history"), 5000, 100, 100_000),
+            launch_at_login=bool(value.get("launch_at_login", False)),
+            disconnect_warning_seconds=_bounded_int(
+                value.get("disconnect_warning_seconds"), 30, 10, 3600
+            ),
+            client_id=_clean_client_id(value.get("client_id")),
+        )
 
     def to_mapping(self) -> dict[str, Any]:
-        return {"servers": [server.to_mapping() for server in self.servers]}
+        return {
+            "servers": [server.to_mapping() for server in self.servers],
+            "sound_enabled": self.sound_enabled,
+            "sounds": dict(self.sounds),
+            "noise_policy": self.noise_policy.to_mapping(),
+            "retention_days": self.retention_days,
+            "max_history": self.max_history,
+            "launch_at_login": self.launch_at_login,
+            "disconnect_warning_seconds": self.disconnect_warning_seconds,
+            "client_id": self.client_id,
+        }
+
+
+def _bounded_int(value: object, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(parsed, maximum))
+
+
+def _clean_client_id(value: object) -> str:
+    text = str(value or "").strip()
+    if 8 <= len(text) <= 80 and all(character.isalnum() or character in "-_" for character in text):
+        return text
+    return uuid.uuid4().hex
 
 
 class ConfigStore:

@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from datetime import datetime
 
 import socketio
 from PySide6.QtCore import QMetaObject, QObject, Qt, QThread, QTimer, Signal, Slot
@@ -28,6 +29,72 @@ RETRY_MAX_S = 15.0
 # A stuck handshake thread is bounded by CONNECT_TIMEOUT_S; allow a margin
 # before the maintenance loop is permitted to start a fresh attempt.
 CONNECT_STUCK_S = CONNECT_TIMEOUT_S + 3.0
+LIFECYCLE_STATES = frozenset({"unread", "snoozed"})
+
+
+def normalize_resume_after(value: object) -> int | None:
+    """Return a valid replay cursor, treating malformed values as absent."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        cursor = int(value)
+    except (TypeError, ValueError):
+        return None
+    return cursor if cursor >= 0 else None
+
+
+def build_auth_payload(
+    subscriptions: set[str] | list[str],
+    *,
+    token: str | None = None,
+    resume_after: int | None = None,
+    client_id: str | None = None,
+) -> dict[str, object]:
+    """Build Socket.IO auth without serializing absent optional credentials."""
+    payload: dict[str, object] = {"subscriptions": sorted({str(item) for item in subscriptions})}
+    if token:
+        payload["token"] = token
+    cursor = normalize_resume_after(resume_after)
+    if cursor is not None:
+        payload["resume_after"] = cursor
+    if client_id:
+        payload["client_id"] = client_id
+    return payload
+
+
+def build_lifecycle_payload(
+    alert_id: str,
+    status: str,
+    *,
+    snoozed_until: str | None = None,
+    note: str | None = None,
+) -> dict[str, str]:
+    """Validate and create an ``alert:lifecycle`` request payload."""
+    clean_id = str(alert_id or "").strip()
+    if not clean_id:
+        raise ValueError("Alert id is required")
+    if len(clean_id) > 80:
+        raise ValueError("Alert id must not exceed 80 characters")
+    clean_status = str(status or "").strip().lower()
+    if clean_status not in LIFECYCLE_STATES:
+        raise ValueError(f"Unsupported lifecycle status: {clean_status or 'empty'}")
+
+    payload = {"id": clean_id, "status": clean_status}
+    clean_snoozed_until = str(snoozed_until or "").strip()
+    if clean_status == "snoozed" and not clean_snoozed_until:
+        raise ValueError("Snooze time is required for a snoozed alert")
+    if clean_status == "snoozed":
+        try:
+            datetime.fromisoformat(clean_snoozed_until.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("Snooze time must be an ISO-8601 timestamp") from exc
+        if len(clean_snoozed_until) > 64:
+            raise ValueError("Snooze time must not exceed 64 characters")
+        payload["snoozed_until"] = clean_snoozed_until
+    clean_note = " ".join(str(note or "").split())
+    if clean_note:
+        payload["note"] = clean_note[:500]
+    return payload
 
 
 class PingTracker:
@@ -82,11 +149,23 @@ class ServerLink:
     thread is guarded by ``_lock``.
     """
 
-    def __init__(self, hub: SocketHub, url: str, subscriptions: set[str]) -> None:
+    def __init__(
+        self,
+        hub: SocketHub,
+        url: str,
+        subscriptions: set[str],
+        *,
+        token: str | None = None,
+        resume_after: int | None = None,
+        client_id: str | None = None,
+    ) -> None:
         self._hub = hub
         self._url = url
         self._lock = threading.Lock()
         self._subscriptions = set(subscriptions)
+        self._token = token
+        self._resume_after = normalize_resume_after(resume_after)
+        self._client_id = client_id
         self._desired = True
         self._connected = False
         self._connecting = False
@@ -151,6 +230,16 @@ class ServerLink:
             elif isinstance(data, list):
                 self._hub.emit_subscriptions(self._url, data)
 
+        @self._sio.on("recovery:complete")
+        def on_recovery_complete(data: object) -> None:
+            if isinstance(data, dict):
+                self._hub.emit_recovery(self._url, data)
+
+        @self._sio.on("alert:lifecycle:confirmed")
+        def on_lifecycle_confirmed(data: object) -> None:
+            if isinstance(data, dict):
+                self._hub.emit_lifecycle(self._url, data)
+
         @self._sio.on("health:pong")
         def on_health_pong(data: object) -> None:
             if not isinstance(data, dict):
@@ -196,6 +285,28 @@ class ServerLink:
         if connected:
             self._emit_subscriptions()
 
+    def update_configuration(
+        self,
+        subscriptions: set[str],
+        *,
+        token: str | None,
+        resume_after: int | None,
+        client_id: str | None,
+    ) -> None:
+        """Apply mutable config, reconnecting only when handshake data changed."""
+        with self._lock:
+            subscriptions_changed = subscriptions != self._subscriptions
+            handshake_changed = token != self._token or client_id != self._client_id
+            self._subscriptions = set(subscriptions)
+            self._token = token
+            self._resume_after = normalize_resume_after(resume_after)
+            self._client_id = client_id
+            connected = self._connected
+        if handshake_changed and connected:
+            self.request_reconnect()
+        elif subscriptions_changed and connected:
+            self._emit_subscriptions()
+
     def request_reconnect(self) -> None:
         with self._lock:
             self._desired = True
@@ -205,11 +316,40 @@ class ServerLink:
         if connected:
             self._safe_disconnect()
 
+    def update_resume_after(self, sequence: object) -> None:
+        """Advance the cursor used by the *next* handshake without reconnecting."""
+        cursor = normalize_resume_after(sequence)
+        if cursor is None:
+            return
+        with self._lock:
+            self._resume_after = max(self._resume_after or 0, cursor)
+
     def request_test(self) -> None:
         if not self._sio.connected:
             return
         with suppress_socketio():
             self._sio.emit("alert:test", {"requested_at": time.time()})
+
+    def request_lifecycle(self, payload: dict[str, str]) -> None:
+        with self._lock:
+            connected = self._connected
+        if not connected or not self._sio.connected:
+            return
+
+        def on_acknowledgement(response: object = None, *_extra: object) -> None:
+            if not isinstance(response, dict):
+                return
+            confirmation = dict(response)
+            confirmation.setdefault("id", payload["id"])
+            if confirmation.get("ok") is not False:
+                confirmation.setdefault("status", payload["status"])
+                for key in ("snoozed_until", "note"):
+                    if key in payload:
+                        confirmation.setdefault(key, payload[key])
+            self._hub.emit_lifecycle(self._url, confirmation)
+
+        with suppress_socketio():
+            self._sio.emit("alert:lifecycle", payload, callback=on_acknowledgement)
 
     def shutdown(self) -> None:
         with self._lock:
@@ -220,23 +360,28 @@ class ServerLink:
 
     def _spawn_connect(self) -> None:
         with self._lock:
-            subscriptions = sorted(self._subscriptions)
+            auth = build_auth_payload(
+                self._subscriptions,
+                token=self._token,
+                resume_after=self._resume_after,
+                client_id=self._client_id,
+            )
         self._hub.emit_state(self._url, "connecting", "Negotiating Socket.IO transport")
         thread = threading.Thread(
             target=self._connect_worker,
-            args=(subscriptions,),
+            args=(auth,),
             name=f"connect-{self._url}",
             daemon=True,
         )
         thread.start()
 
-    def _connect_worker(self, subscriptions: list[str]) -> None:
+    def _connect_worker(self, auth: dict[str, object]) -> None:
         if self._sio.connected:
             return
         try:
             self._sio.connect(
                 self._url,
-                auth={"subscriptions": subscriptions},
+                auth=auth,
                 wait=True,
                 wait_timeout=CONNECT_TIMEOUT_S,
             )
@@ -293,6 +438,8 @@ class SocketHub(QObject):
     catalog_received = Signal(str, object)
     subscriptions_confirmed = Signal(str, object)
     health_updated = Signal(str, int, str)
+    recovery_completed = Signal(str, object)
+    lifecycle_confirmed = Signal(str, object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -312,7 +459,7 @@ class SocketHub(QObject):
     def set_servers(self, servers: object) -> None:
         if not isinstance(servers, list):
             return
-        desired: dict[str, set[str]] = {}
+        desired: dict[str, dict[str, object]] = {}
         for entry in servers:
             if not isinstance(entry, dict):
                 continue
@@ -320,19 +467,46 @@ class SocketHub(QObject):
             if not url:
                 continue
             subs = entry.get("subscriptions", [])
-            desired[url] = {str(item) for item in subs} if isinstance(subs, list) else set()
+            token_value = entry.get("token")
+            client_id_value = entry.get("client_id")
+            desired[url] = {
+                "subscriptions": (
+                    {str(item) for item in subs} if isinstance(subs, list) else set()
+                ),
+                "token": str(token_value) if token_value else None,
+                "resume_after": normalize_resume_after(entry.get("resume_after")),
+                "client_id": str(client_id_value) if client_id_value else None,
+            }
 
         for url in list(self._links):
             if url not in desired:
                 self._links.pop(url).shutdown()
 
-        for url, subs in desired.items():
+        for url, options in desired.items():
+            subscriptions = options["subscriptions"]
+            if not isinstance(subscriptions, set):
+                continue
+            token = options["token"] if isinstance(options["token"], str) else None
+            resume_after = normalize_resume_after(options["resume_after"])
+            client_id = options["client_id"] if isinstance(options["client_id"], str) else None
             link = self._links.get(url)
             if link is None:
-                self._links[url] = ServerLink(self, url, subs)
+                self._links[url] = ServerLink(
+                    self,
+                    url,
+                    subscriptions,
+                    token=token,
+                    resume_after=resume_after,
+                    client_id=client_id,
+                )
                 self.state_changed.emit(url, "connecting", "Opening the event channel")
             else:
-                link.set_subscriptions(subs)
+                link.update_configuration(
+                    subscriptions,
+                    token=token,
+                    resume_after=resume_after,
+                    client_id=client_id,
+                )
 
     @Slot(str, object)
     def update_subscriptions(self, url: str, subscriptions: object) -> None:
@@ -348,11 +522,35 @@ class SocketHub(QObject):
         if link is not None:
             link.request_reconnect()
 
+    @Slot(str, object)
+    def update_resume_after(self, url: str, sequence: object) -> None:
+        link = self._links.get(url)
+        if link is not None:
+            link.update_resume_after(sequence)
+
     @Slot(str)
     def request_test(self, url: str) -> None:
         link = self._links.get(url)
         if link is not None:
             link.request_test()
+
+    @Slot(str, object)
+    def request_lifecycle(self, url: str, payload: object) -> None:
+        link = self._links.get(url)
+        if link is None or not isinstance(payload, dict):
+            return
+        try:
+            clean = build_lifecycle_payload(
+                str(payload.get("id", "")),
+                str(payload.get("status", "")),
+                snoozed_until=(
+                    str(payload["snoozed_until"]) if payload.get("snoozed_until") else None
+                ),
+                note=str(payload["note"]) if payload.get("note") else None,
+            )
+        except ValueError:
+            return
+        link.request_lifecycle(clean)
 
     @Slot()
     def stop(self) -> None:
@@ -384,6 +582,12 @@ class SocketHub(QObject):
     def emit_health(self, url: str, rtt_ms: int, transport: str) -> None:
         self.health_updated.emit(url, rtt_ms, transport)
 
+    def emit_recovery(self, url: str, payload: object) -> None:
+        self.recovery_completed.emit(url, payload)
+
+    def emit_lifecycle(self, url: str, payload: object) -> None:
+        self.lifecycle_confirmed.emit(url, payload)
+
 
 class SocketManager(QObject):
     """Main-thread facade for the hub living in a dedicated Qt thread."""
@@ -393,11 +597,15 @@ class SocketManager(QObject):
     catalog_received = Signal(str, object)
     subscriptions_confirmed = Signal(str, object)
     health_updated = Signal(str, int, str)
+    recovery_completed = Signal(str, object)
+    lifecycle_confirmed = Signal(str, object)
 
     _servers_requested = Signal(object)
     _subscriptions_requested = Signal(str, object)
     _reconnect_requested = Signal(str)
     _test_requested = Signal(str)
+    _lifecycle_requested = Signal(str, object)
+    _resume_after_requested = Signal(str, object)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -411,12 +619,16 @@ class SocketManager(QObject):
         self._subscriptions_requested.connect(self._hub.update_subscriptions)
         self._reconnect_requested.connect(self._hub.request_reconnect)
         self._test_requested.connect(self._hub.request_test)
+        self._lifecycle_requested.connect(self._hub.request_lifecycle)
+        self._resume_after_requested.connect(self._hub.update_resume_after)
 
         self._hub.state_changed.connect(self.state_changed)
         self._hub.alert_received.connect(self.alert_received)
         self._hub.catalog_received.connect(self.catalog_received)
         self._hub.subscriptions_confirmed.connect(self.subscriptions_confirmed)
         self._hub.health_updated.connect(self.health_updated)
+        self._hub.recovery_completed.connect(self.recovery_completed)
+        self._hub.lifecycle_confirmed.connect(self.lifecycle_confirmed)
         self._thread.finished.connect(self._hub.deleteLater)
         self._thread.start()
 
@@ -429,8 +641,44 @@ class SocketManager(QObject):
     def reconnect(self, url: str) -> None:
         self._reconnect_requested.emit(url)
 
+    def update_resume_after(self, url: str, sequence: int) -> None:
+        cursor = normalize_resume_after(sequence)
+        if cursor is not None:
+            self._resume_after_requested.emit(url, cursor)
+
     def request_test(self, url: str) -> None:
         self._test_requested.emit(url)
+
+    def request_lifecycle(
+        self,
+        url: str,
+        alert_id: str,
+        status: str,
+        snoozed_until: str | None = None,
+        note: str | None = None,
+    ) -> None:
+        payload = build_lifecycle_payload(
+            alert_id,
+            status,
+            snoozed_until=snoozed_until,
+            note=note,
+        )
+        self._lifecycle_requested.emit(url, payload)
+
+    def snooze_alert(
+        self,
+        url: str,
+        alert_id: str,
+        snoozed_until: str | None = None,
+        note: str | None = None,
+    ) -> None:
+        self.request_lifecycle(
+            url,
+            alert_id,
+            "snoozed",
+            snoozed_until=snoozed_until,
+            note=note,
+        )
 
     def stop(self) -> None:
         if not self._thread.isRunning():

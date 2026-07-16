@@ -1,6 +1,90 @@
 import time
 
-from signaldesk.socket_client import PingTracker
+import pytest
+
+from signaldesk.socket_client import (
+    PingTracker,
+    ServerLink,
+    build_auth_payload,
+    build_lifecycle_payload,
+)
+
+
+def test_auth_payload_omits_absent_optional_fields() -> None:
+    assert build_auth_payload({"security", "billing"}) == {
+        "subscriptions": ["billing", "security"]
+    }
+
+
+def test_auth_payload_includes_recovery_token_and_client_identity() -> None:
+    assert build_auth_payload(
+        ["security"],
+        token="secret-value",
+        resume_after=0,
+        client_id="desktop-a",
+    ) == {
+        "subscriptions": ["security"],
+        "token": "secret-value",
+        "resume_after": 0,
+        "client_id": "desktop-a",
+    }
+
+
+def test_lifecycle_payload_validation() -> None:
+    assert build_lifecycle_payload("alert-1", "unread") == {
+        "id": "alert-1",
+        "status": "unread",
+    }
+    assert build_lifecycle_payload(
+        "alert-1",
+        "SNOOZED",
+        snoozed_until="2026-07-15T14:00:00Z",
+        note="Investigating",
+    ) == {
+        "id": "alert-1",
+        "status": "snoozed",
+        "snoozed_until": "2026-07-15T14:00:00Z",
+        "note": "Investigating",
+    }
+    with pytest.raises(ValueError, match="Unsupported lifecycle status"):
+        build_lifecycle_payload("alert-1", "deleted")
+    with pytest.raises(ValueError, match="ISO-8601"):
+        build_lifecycle_payload("alert-1", "snoozed", snoozed_until="tomorrow")
+    with pytest.raises(ValueError, match="required"):
+        build_lifecycle_payload("alert-1", "snoozed")
+    with pytest.raises(ValueError, match="80"):
+        build_lifecycle_payload("x" * 81, "unread")
+    for removed_status in ("acknowledged", "resolved"):
+        with pytest.raises(ValueError, match="Unsupported lifecycle status"):
+            build_lifecycle_payload("alert-1", removed_status)
+
+
+def test_reminder_confirmation_is_forwarded_with_request_identity() -> None:
+    confirmations: list[tuple[str, object]] = []
+
+    class Hub:
+        def emit_lifecycle(self, url: str, payload: object) -> None:
+            confirmations.append((url, payload))
+
+    class Client:
+        connected = True
+
+        def emit(self, event: str, payload: object, *, callback: object) -> None:
+            assert event == "alert:lifecycle"
+            assert payload == {"id": "alert-1", "status": "unread"}
+            callback({"ok": False, "error": "Alert was not found"})
+
+    link = ServerLink(Hub(), "https://alerts.example.com", {"security"})
+    link._sio = Client()
+    link._connected = True
+    link.request_lifecycle({"id": "alert-1", "status": "unread"})
+
+    assert confirmations == [
+        (
+            "https://alerts.example.com",
+            {"ok": False, "error": "Alert was not found", "id": "alert-1"},
+        )
+    ]
 
 
 def test_ping_tracker_measures_round_trip() -> None:

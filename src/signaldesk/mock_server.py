@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hmac
 import inspect
 import itertools
 import json
 import logging
+import os
 import random
 import uuid
+from collections import deque
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any
 
 import socketio
@@ -19,6 +23,8 @@ import uvicorn
 from signaldesk.models import Alert, AlertChannel, Severity, utc_now_iso
 
 LOGGER = logging.getLogger("signaldesk.mock")
+DEFAULT_EVENT_LOG_SIZE = 500
+LIFECYCLE_STATES = frozenset({"unread", "snoozed"})
 
 CHANNELS = [
     AlertChannel("infrastructure", "Infrastructure", "Hosts, services, and capacity signals"),
@@ -31,35 +37,52 @@ CHANNELS = [
 DEMO_ALERTS = [
     {
         "title": "API latency recovered",
-        "message": "The p95 response time is back below 180 ms in the EU region.",
+        "message": (
+            "The p95 response time is back below 180 ms in the EU region. "
+            "Dashboard: https://status.example.com/latency"
+        ),
         "severity": "success",
         "channel": "infrastructure",
         "source": "Edge monitor",
     },
     {
         "title": "Unusual sign-in blocked",
-        "message": "A sign-in from a new location was blocked pending verification.",
+        "message": (
+            "A sign-in from a new location was blocked pending verification. "
+            "Review it at https://security.example.com/signins/9f2a"
+        ),
         "severity": "warning",
         "channel": "security",
         "source": "Identity guard",
+        "requires_attention": True,
     },
     {
         "title": "Release completed",
-        "message": "Version 2.4.0 is healthy on all production instances.",
+        "message": (
+            "Version 2.4.0 is healthy on all production instances. "
+            "Release notes: https://github.com/example/app/releases/tag/v2.4.0"
+        ),
         "severity": "success",
         "channel": "deployments",
         "source": "Release pipeline",
     },
     {
         "title": "Database connection pressure",
-        "message": "The primary pool is at 92% utilization. Scaling is in progress.",
+        "message": (
+            "The primary pool is at 92% utilization. Scaling is in progress. "
+            "Runbook: https://wiki.example.com/runbooks/db-pool"
+        ),
         "severity": "critical",
         "channel": "infrastructure",
         "source": "Database monitor",
+        "requires_attention": True,
     },
     {
         "title": "Usage threshold reached",
-        "message": "This workspace has consumed 80% of its monthly event allowance.",
+        "message": (
+            "This workspace has consumed 80% of its monthly event allowance. "
+            "Manage limits: https://billing.example.com/usage"
+        ),
         "severity": "info",
         "channel": "billing",
         "source": "Usage service",
@@ -67,13 +90,110 @@ DEMO_ALERTS = [
 ]
 
 
+def normalize_resume_after(value: object) -> int | None:
+    """Return a valid non-negative replay cursor, or ``None`` when absent."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        cursor = int(value)
+    except (TypeError, ValueError):
+        return None
+    return cursor if cursor >= 0 else None
+
+
+def token_is_authorized(required_token: str | None, supplied_token: object) -> bool:
+    """Check optional token auth with a timing-safe comparison when enabled."""
+    if required_token is None:
+        return True
+    return isinstance(supplied_token, str) and hmac.compare_digest(
+        supplied_token, required_token
+    )
+
+
+def build_recovery_batch(
+    events: list[dict[str, Any]],
+    subscriptions: set[str],
+    resume_after: int | None,
+    latest_sequence: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Select retained subscribed events after a cursor and describe any gap."""
+    cursor = normalize_resume_after(resume_after)
+    first_sequence = normalize_resume_after(events[0].get("sequence")) if events else None
+    oldest_available = first_sequence if first_sequence is not None else latest_sequence + 1
+    gap = (
+        cursor is not None
+        and latest_sequence > cursor
+        and cursor < oldest_available - 1
+    )
+    recovered: list[dict[str, Any]] = []
+    if cursor is not None:
+        for event in events:
+            sequence = normalize_resume_after(event.get("sequence"))
+            if (
+                sequence is not None
+                and sequence > cursor
+                and str(event.get("channel", "")) in subscriptions
+            ):
+                replay = dict(event)
+                replay["replayed"] = True
+                recovered.append(replay)
+
+    metadata = {
+        "recovered_count": len(recovered),
+        "latest_sequence": latest_sequence,
+        "oldest_available_sequence": oldest_available,
+        "gap": gap,
+        "truncated": gap,
+    }
+    return recovered, metadata
+
+
+def validate_lifecycle_payload(data: object) -> dict[str, str]:
+    """Validate an incoming lifecycle action without retaining arbitrary data."""
+    if not isinstance(data, dict):
+        raise ValueError("Lifecycle payload must be an object")
+    alert_id = str(data.get("id", "")).strip()
+    if not alert_id:
+        raise ValueError("Alert id is required")
+    status = str(data.get("status", "")).strip().lower()
+    if status not in LIFECYCLE_STATES:
+        raise ValueError("Status must be unread or snoozed")
+
+    payload = {"id": alert_id[:80], "status": status}
+    snoozed_until = str(data.get("snoozed_until", "")).strip()
+    if status == "snoozed" and not snoozed_until:
+        raise ValueError("Snooze time is required for a snoozed alert")
+    if status == "snoozed":
+        try:
+            datetime.fromisoformat(snoozed_until.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("Snooze time must be an ISO-8601 timestamp") from exc
+        payload["snoozed_until"] = snoozed_until[:64]
+    note = " ".join(str(data.get("note", "")).split())
+    if note:
+        payload["note"] = note[:500]
+    return payload
+
+
 class MockAlertServer:
-    def __init__(self, *, demo: bool = False, demo_interval: float = 8.0) -> None:
+    def __init__(
+        self,
+        *,
+        demo: bool = False,
+        demo_interval: float = 8.0,
+        auth_token: str | None = None,
+        event_log_size: int = DEFAULT_EVENT_LOG_SIZE,
+    ) -> None:
         self.sio = socketio.AsyncServer(async_mode="asgi", logger=False, engineio_logger=False)
         # sid -> subscribed channels (source of truth for /health and cleanup).
         self.clients: dict[str, set[str]] = {}
         # channel -> subscribed sids (reverse index for O(1) delivery counts).
         self._members: dict[str, set[str]] = {}
+        self._client_ids: dict[str, str] = {}
+        self._auth_token = auth_token if auth_token else None
+        self._event_log: deque[dict[str, Any]] = deque(maxlen=max(1, event_log_size))
+        self._latest_sequence = 0
+        self._event_lock = asyncio.Lock()
         self.demo = demo
         self.demo_interval = max(2.0, demo_interval)
         self._demo_task: asyncio.Task[None] | None = None
@@ -84,20 +204,43 @@ class MockAlertServer:
         @self.sio.event
         async def connect(sid: str, environ: dict[str, Any], auth: Any = None) -> None:
             del environ
+            if self._auth_token is not None:
+                supplied_token = auth.get("token") if isinstance(auth, dict) else None
+                if not token_is_authorized(self._auth_token, supplied_token):
+                    LOGGER.warning("Client authentication failed: %s", sid)
+                    raise socketio.exceptions.ConnectionRefusedError("Authentication failed")
             supplied = auth.get("subscriptions") if isinstance(auth, dict) else None
             requested = (
                 supplied
                 if isinstance(supplied, list)
                 else ["infrastructure", "security", "deployments"]
             )
-            subscriptions = await self._apply_subscriptions(sid, requested)
-            LOGGER.info("Client connected: %s", sid)
-            await self.sio.emit("catalog", self.catalog_payload(), to=sid)
-            await self.sio.emit(
-                "subscriptions:confirmed",
-                {"subscriptions": sorted(subscriptions)},
-                to=sid,
+            resume_after = normalize_resume_after(
+                auth.get("resume_after") if isinstance(auth, dict) else None
             )
+            client_id = str(auth.get("client_id", "")).strip() if isinstance(auth, dict) else ""
+            if client_id:
+                self._client_ids[sid] = client_id[:80]
+            await self.sio.emit("catalog", self.catalog_payload(), to=sid)
+            # Joining rooms, taking the replay snapshot, and sending the
+            # recovery boundary are atomic relative to live publication.
+            async with self._event_lock:
+                subscriptions = await self._apply_subscriptions(sid, requested)
+                await self.sio.emit(
+                    "subscriptions:confirmed",
+                    {"subscriptions": sorted(subscriptions)},
+                    to=sid,
+                )
+                recovered, metadata = build_recovery_batch(
+                    list(self._event_log),
+                    subscriptions,
+                    resume_after,
+                    self._latest_sequence,
+                )
+                for payload in recovered:
+                    await self.sio.emit("alert", payload, to=sid)
+                await self.sio.emit("recovery:complete", metadata, to=sid)
+            LOGGER.info("Client connected: %s", sid)
             if self.demo and self._demo_task is None:
                 self._demo_task = asyncio.create_task(
                     self._demo_loop(), name="signaldesk-demo-alerts"
@@ -105,6 +248,7 @@ class MockAlertServer:
 
         @self.sio.event
         async def disconnect(sid: str, reason: Any = None) -> None:
+            self._client_ids.pop(sid, None)
             for channel in self.clients.pop(sid, set()):
                 members = self._members.get(channel)
                 if members is not None:
@@ -138,15 +282,58 @@ class MockAlertServer:
             alert = Alert(
                 id=str(uuid.uuid4()),
                 title="Socket test received",
-                message="The complete real-time alert path is working correctly.",
+                message=(
+                    "The complete real-time alert path is working correctly. "
+                    "Docs: https://github.com/Nielk74/signaldesk"
+                ),
                 severity=Severity.SUCCESS,
                 channel=channel,
                 source="Mock server",
                 created_at=utc_now_iso(),
                 duration_ms=7000,
             )
-            await self.sio.emit("alert", alert.to_payload(), to=sid)
-            return {"ok": True, "id": alert.id}
+            _delivered, payload = await self._publish_alert(alert, to=sid, delivered=1)
+            return {"ok": True, "id": alert.id, "sequence": payload["sequence"]}
+
+        @self.sio.on("alert:lifecycle")
+        async def alert_lifecycle(sid: str, data: Any) -> dict[str, Any]:
+            try:
+                lifecycle = validate_lifecycle_payload(data)
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+
+            lifecycle["updated_at"] = utc_now_iso()
+            client_id = self._client_ids.get(sid)
+            if client_id:
+                lifecycle["client_id"] = client_id
+            confirmation: dict[str, Any] = {"ok": True, **lifecycle}
+            async with self._event_lock:
+                channel = ""
+                for event in reversed(self._event_log):
+                    if str(event.get("id", "")) == lifecycle["id"]:
+                        if not Alert.from_payload(event).requires_attention:
+                            return {
+                                "ok": False,
+                                "error": "This alert does not allow reminders",
+                            }
+                        event.pop("snoozed_until", None)
+                        event.pop("lifecycle", None)
+                        event.update(lifecycle)
+                        channel = str(event.get("channel", ""))
+                        break
+                if not channel:
+                    return {"ok": False, "error": "Alert was not found"}
+                # Always confirm to the requester, even if they unsubscribed
+                # after receiving the alert. Other clients only see lifecycle
+                # state for channels to which they are currently subscribed.
+                await self.sio.emit("alert:lifecycle:confirmed", confirmation, to=sid)
+                await self.sio.emit(
+                    "alert:lifecycle:confirmed",
+                    confirmation,
+                    room=channel,
+                    skip_sid=sid,
+                )
+            return confirmation
 
     async def _apply_subscriptions(self, sid: str, requested: Any) -> set[str]:
         """Reconcile a client's channel rooms with its requested subscriptions."""
@@ -203,10 +390,34 @@ class MockAlertServer:
         """
         members = self._members.get(alert.channel)
         delivered = len(members) if members else 0
-        if delivered:
-            await self.sio.emit("alert", alert.to_payload(), room=alert.channel)
+        await self._publish_alert(
+            alert,
+            room=alert.channel,
+            delivered=delivered,
+        )
         LOGGER.info("Published %s alert to %d client(s)", alert.channel, delivered)
         return delivered
+
+    async def _publish_alert(
+        self,
+        alert: Alert,
+        *,
+        room: str | None = None,
+        to: str | None = None,
+        delivered: int,
+    ) -> tuple[int, dict[str, Any]]:
+        """Sequence, retain, and emit one alert under the recovery boundary lock."""
+        async with self._event_lock:
+            self._latest_sequence += 1
+            payload = alert.to_payload()
+            payload["sequence"] = self._latest_sequence
+            self._event_log.append(dict(payload))
+            if delivered:
+                if to is not None:
+                    await self.sio.emit("alert", payload, to=to)
+                elif room is not None:
+                    await self.sio.emit("alert", payload, room=room)
+        return delivered, payload
 
     async def _demo_loop(self) -> None:
         sequence = itertools.cycle(DEMO_ALERTS)
@@ -260,10 +471,18 @@ class MockAlertServer:
                 payload.setdefault("source", "HTTP control")
                 alert = Alert.from_payload(payload)
                 delivered = await self.publish(alert)
+                published_payload = next(
+                    (
+                        dict(item)
+                        for item in reversed(self._event_log)
+                        if item.get("id") == alert.id
+                    ),
+                    alert.to_payload(),
+                )
                 await self._json_response(
                     send,
                     202,
-                    {"accepted": True, "delivered": delivered, "alert": alert.to_payload()},
+                    {"accepted": True, "delivered": delivered, "alert": published_payload},
                 )
             except (json.JSONDecodeError, TypeError, ValueError) as exc:
                 await self._json_response(send, 400, {"error": str(exc)})
@@ -314,6 +533,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--interval", default=8.0, type=float, help="Seconds between demo alerts (minimum: 2)"
     )
+    parser.add_argument(
+        "--token",
+        default=os.environ.get("SIGNALDESK_MOCK_TOKEN"),
+        help=(
+            "Require this Socket.IO token (or set SIGNALDESK_MOCK_TOKEN; "
+            "the environment variable avoids shell history)"
+        ),
+    )
+    parser.add_argument(
+        "--event-log-size",
+        default=DEFAULT_EVENT_LOG_SIZE,
+        type=int,
+        help=f"Number of alerts retained for replay (default: {DEFAULT_EVENT_LOG_SIZE})",
+    )
     parser.add_argument("--verbose", action="store_true", help="Enable verbose server logs")
     return parser
 
@@ -325,7 +558,12 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s | %(levelname)-7s | %(message)s",
         datefmt="%H:%M:%S",
     )
-    server = MockAlertServer(demo=args.demo, demo_interval=args.interval)
+    server = MockAlertServer(
+        demo=args.demo,
+        demo_interval=args.interval,
+        auth_token=args.token,
+        event_log_size=args.event_log_size,
+    )
     LOGGER.info("Mock server listening at http://%s:%d", args.host, args.port)
     LOGGER.info("Publish custom alerts with POST http://%s:%d/alert", args.host, args.port)
     uvicorn.run(

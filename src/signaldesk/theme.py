@@ -29,6 +29,9 @@ COLORS = {
     "success_bright": "#73DDA6",
     "warning_bright": "#F2BE6B",
     "critical_bright": "#FF8A96",
+    "warning_surface": "#FFF4DD",
+    "critical_surface": "#FFF0F2",
+    "focus_ring": "#005E3A",
 }
 
 SEVERITY_COLORS = {
@@ -57,6 +60,8 @@ QMainWindow#RootWindow, QWidget#RootContent {{
     background-color: {COLORS["background"]};
 }}
 
+QDialog#AlertDetailDialog {{ background-color: {COLORS["background"]}; }}
+
 QFrame#CommandHeader {{
     background-color: {COLORS["chrome"]};
     border: none;
@@ -67,6 +72,17 @@ QFrame#FooterRail {{
     background-color: {COLORS["surface_raised"]};
     border: none;
     border-top: 1px solid {COLORS["border"]};
+}}
+
+QFrame#RecoveryBanner {{
+    background-color: {COLORS["warning_surface"]};
+    border: none;
+    border-bottom: 1px solid {COLORS["warning"]};
+}}
+
+QFrame#RecoveryBanner[severity="critical"] {{
+    background-color: {COLORS["critical_surface"]};
+    border-bottom-color: {COLORS["critical"]};
 }}
 
 QLabel#BrandTitle {{
@@ -107,6 +123,11 @@ QLabel#SectionTitle {{
     font-weight: 700;
 }}
 
+QLabel#DialogTitle {{
+    font-size: 20px;
+    font-weight: 750;
+}}
+
 QLabel#ConnectionTitle {{
     font-size: 20px;
     font-weight: 720;
@@ -137,6 +158,46 @@ QFrame#ConnectionCard, QFrame#EndpointCard, QFrame#Ledger, QFrame#Card {{
     background-color: {COLORS["surface"]};
     border: 1px solid {COLORS["border_strong"]};
     border-radius: 0px;
+}}
+
+QLabel#InboxIconTile {{
+    background-color: {COLORS["surface_hover"]};
+    border: 1px solid {COLORS["border"]};
+}}
+
+QFrame#ChannelCatalogState {{
+    background-color: {COLORS["surface_raised"]};
+    border: none;
+}}
+
+QLabel#ChannelCatalogIcon {{
+    background-color: {COLORS["surface"]};
+    border: 1px solid {COLORS["border"]};
+}}
+
+QFrame#FilterBar, QFrame#HistoryPager {{
+    background-color: {COLORS["surface_raised"]};
+    border: 1px solid {COLORS["border"]};
+}}
+
+QFrame#InlineEditor {{
+    background-color: {COLORS["surface_raised"]};
+    border: 1px solid {COLORS["border"]};
+}}
+
+QGroupBox {{
+    background-color: {COLORS["surface"]};
+    border: 1px solid {COLORS["border_strong"]};
+    margin-top: 10px;
+    padding-top: 8px;
+    font-weight: 700;
+}}
+
+QGroupBox::title {{
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 5px;
+    color: {COLORS["text_secondary"]};
 }}
 
 QFrame#ConnectionAccent, QFrame#PanelAccent {{
@@ -179,6 +240,10 @@ QFrame#ChannelRow, QFrame#AlertHistoryRow {{
 
 QFrame#ChannelRow:hover, QFrame#AlertHistoryRow:hover {{
     background-color: {COLORS["surface_hover"]};
+}}
+
+QFrame#AlertHistoryRow:focus {{
+    border: 2px solid {COLORS["focus_ring"]};
 }}
 
 QFrame#ChannelRow[selected="true"] {{ background-color: {COLORS["surface_raised"]}; }}
@@ -252,11 +317,59 @@ QPushButton#GhostButton:hover {{
     border-color: {COLORS["border_strong"]};
 }}
 
+QPushButton#DisclosureButton {{
+    min-height: 44px;
+    padding: 0 4px;
+    background-color: transparent;
+    color: {COLORS["primary"]};
+    border: 1px solid transparent;
+    text-align: left;
+}}
+
+QPushButton#DisclosureButton:hover {{
+    color: {COLORS["primary_hover"]};
+    background-color: transparent;
+    border-bottom-color: {COLORS["primary"]};
+}}
+
+QPushButton#DisclosureButton:focus {{
+    border: 2px solid {COLORS["focus_ring"]};
+}}
+
+QPushButton#DangerButton {{
+    background-color: {COLORS["surface"]};
+    color: {COLORS["critical"]};
+    border-color: {COLORS["critical"]};
+}}
+
+QFrame#StatusFeedback {{
+    background-color: {COLORS["surface_hover"]};
+    border: 1px solid {COLORS["primary"]};
+}}
+
+QPushButton#DangerButton:hover {{
+    background-color: {COLORS["critical_surface"]};
+}}
+
+QPushButton#ToastActionButton {{
+    min-height: 38px;
+    padding: 0 12px;
+    background-color: {COLORS["surface"]};
+    color: {COLORS["text_secondary"]};
+    border-color: {COLORS["border_strong"]};
+}}
+
+QPushButton#ToastActionButton:hover {{
+    color: {COLORS["primary"]};
+    border-color: {COLORS["primary"]};
+    background-color: {COLORS["surface_hover"]};
+}}
+
 QPushButton#IconButton {{
-    min-width: 36px;
-    max-width: 36px;
-    min-height: 36px;
-    max-height: 36px;
+    min-width: 44px;
+    max-width: 44px;
+    min-height: 44px;
+    max-height: 44px;
     padding: 0;
     border-radius: 0px;
     background-color: transparent;
@@ -268,8 +381,38 @@ QPushButton#IconButton:hover {{
     border-color: {COLORS["border"]};
 }}
 
-QPushButton:focus, QLineEdit:focus, QCheckBox:focus {{
-    border: 2px solid {COLORS["primary"]};
+QPushButton#IconButton:checked, QPushButton#IconButton[configured="true"] {{
+    background-color: {COLORS["surface_hover"]};
+    border-color: {COLORS["primary"]};
+}}
+
+QPushButton#IconButton[primary="true"] {{
+    background-color: {COLORS["primary"]};
+    border-color: {COLORS["primary"]};
+}}
+
+QPushButton#IconButton[primary="true"]:hover {{
+    background-color: {COLORS["primary_hover"]};
+    border-color: {COLORS["primary_hover"]};
+}}
+
+QPushButton#IconButton[danger="true"]:hover {{
+    background-color: {COLORS["critical_surface"]};
+    border-color: {COLORS["critical"]};
+}}
+
+QFrame#CommandHeader QPushButton#IconButton[chrome="true"]:hover {{
+    background-color: {COLORS["primary_pressed"]};
+    border-color: {COLORS["primary"]};
+}}
+
+QFrame#CommandHeader QPushButton#IconButton[chrome="true"]:focus {{
+    border: 2px solid {COLORS["chrome_text"]};
+}}
+
+QPushButton:focus, QLineEdit:focus, QComboBox:focus,
+QSpinBox:focus, QTimeEdit:focus, QPlainTextEdit:focus {{
+    border: 2px solid {COLORS["focus_ring"]};
 }}
 
 QPushButton:disabled {{
@@ -291,6 +434,29 @@ QLineEdit {{
 QLineEdit:hover {{ border-color: {COLORS["muted"]}; }}
 QLineEdit[invalid="true"] {{ border: 2px solid {COLORS["critical"]}; }}
 
+QComboBox, QSpinBox, QTimeEdit, QPlainTextEdit {{
+    min-height: 42px;
+    padding: 0 10px;
+    background-color: {COLORS["surface_raised"]};
+    border: 1px solid {COLORS["border_strong"]};
+    border-radius: 0px;
+    selection-background-color: {COLORS["primary"]};
+    selection-color: {COLORS["on_primary"]};
+}}
+
+QComboBox:hover, QSpinBox:hover, QTimeEdit:hover {{ border-color: {COLORS["muted"]}; }}
+QComboBox::drop-down {{
+    width: 28px;
+    border: none;
+    border-left: 1px solid {COLORS["border"]};
+}}
+QComboBox QAbstractItemView {{
+    background-color: {COLORS["surface"]};
+    border: 1px solid {COLORS["border_strong"]};
+    selection-background-color: {COLORS["surface_hover"]};
+    selection-color: {COLORS["text"]};
+}}
+
 QCheckBox {{
     spacing: 9px;
     min-height: 44px;
@@ -309,6 +475,10 @@ QCheckBox::indicator {{
 }}
 
 QCheckBox::indicator:hover {{ border-color: {COLORS["primary"]}; }}
+QCheckBox:focus {{ color: {COLORS["primary"]}; }}
+QCheckBox::indicator:focus {{
+    border: 2px solid {COLORS["focus_ring"]};
+}}
 QCheckBox::indicator:checked {{
     background-color: {COLORS["primary"]};
     border-color: {COLORS["primary"]};
@@ -329,9 +499,9 @@ QTabBar {{
 }}
 
 QTabBar::tab {{
-    min-width: 128px;
+    min-width: 72px;
     min-height: 42px;
-    padding: 0 16px;
+    padding: 0 8px;
     margin: 0;
     border: none;
     border-bottom: 3px solid transparent;
@@ -344,13 +514,19 @@ QTabBar::tab {{
 }}
 
 QTabBar::tab:hover {{
-    background-color: {COLORS["surface_raised"]};
-    color: {COLORS["text_secondary"]};
+    background-color: {COLORS["surface_hover"]};
+    color: {COLORS["text"]};
+    border-bottom: 3px solid {COLORS["border_strong"]};
 }}
 
 QTabBar::tab:selected {{
     background-color: transparent;
     color: {COLORS["text"]};
+    border-bottom: 3px solid {COLORS["primary"]};
+}}
+
+QTabBar::tab:selected:hover {{
+    background-color: {COLORS["surface_hover"]};
     border-bottom: 3px solid {COLORS["primary"]};
 }}
 
@@ -385,7 +561,27 @@ QLabel#HeaderStatus[connectionState="connecting"] {{ color: {COLORS["warning_bri
 QLabel#HeaderStatus[connectionState="disconnected"],
 QLabel#HeaderStatus[connectionState="stopped"] {{ color: {COLORS["critical_bright"]}; }}
 
+QLabel#RowStatus {{
+    font-family: "Cascadia Mono", "Cascadia Code", "Consolas", monospace;
+    font-size: 10px;
+    font-weight: 700;
+}}
+QLabel#RowStatus[connectionState="connected"] {{ color: {COLORS["success"]}; }}
+QLabel#RowStatus[connectionState="connecting"] {{ color: {COLORS["warning"]}; }}
+QLabel#RowStatus[connectionState="disconnected"],
+QLabel#RowStatus[connectionState="stopped"] {{ color: {COLORS["critical"]}; }}
+
 QFrame#AlertToast {{ background: transparent; border: none; }}
+QFrame#ToastOpenSurface {{
+    background-color: transparent;
+    border: 1px solid transparent;
+}}
+QFrame#ToastOpenSurface:hover {{ background-color: {COLORS["surface_hover"]}; }}
+QFrame#ToastOpenSurface:focus {{ border-color: {COLORS["primary"]}; }}
+QFrame#ToastOpenSurface[pressed="true"] {{
+    background-color: {COLORS["border"]};
+    border-color: {COLORS["primary"]};
+}}
 QFrame#ToastMetadata {{
     background-color: {COLORS["surface_raised"]};
     border: none;
@@ -415,9 +611,24 @@ QMenu::item:disabled {{ color: {COLORS["muted"]}; }}
 QMenu::separator {{ height: 1px; background: {COLORS["border"]}; margin: 5px 8px; }}
 
 QToolTip {{
+    color: {COLORS["text_secondary"]};
+    background-color: {COLORS["surface_raised"]};
+    border: 1px solid {COLORS["border"]};
+    padding: 4px 7px;
+    font-size: 11px;
+}}
+
+QPushButton#NotificationOverflowIndicator {{
+    color: {COLORS["text_secondary"]};
+    background-color: {COLORS["surface_raised"]};
+    border: 1px solid {COLORS["border"]};
+    padding: 0px 10px;
+    font-size: 11px;
+    font-weight: 600;
+}}
+QPushButton#NotificationOverflowIndicator:hover {{
     color: {COLORS["text"]};
-    background-color: {COLORS["surface"]};
-    border: 1px solid {COLORS["border_strong"]};
-    padding: 6px;
+    border-color: {COLORS["border_strong"]};
+    background-color: {COLORS["surface_hover"]};
 }}
 """

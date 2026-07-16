@@ -9,6 +9,7 @@ from signaldesk.config import (
     ServerConfig,
     normalize_server_url,
 )
+from signaldesk.policies import NoisePolicy
 
 
 @pytest.mark.parametrize(
@@ -72,6 +73,32 @@ def test_config_migrates_legacy_single_server_layout() -> None:
     assert config.servers[0].subscriptions == ["deployments", "security"]
 
 
+def test_config_round_trips_sound_settings(tmp_path) -> None:
+    store = ConfigStore(tmp_path / "config.json")
+    config = AppConfig(
+        servers=[ServerConfig(url="http://a:1", subscriptions=["security"])],
+        sound_enabled=False,
+        sounds={"info": "bell", "success": "chime", "warning": "alert", "critical": "none"},
+    )
+    store.save(config)
+    assert store.load() == config
+
+
+def test_config_sounds_default_and_filter() -> None:
+    # Missing sounds -> defaults; unknown severities ignored; blank values dropped.
+    config = AppConfig.from_mapping(
+        {
+            "servers": [{"url": "http://a:1"}],
+            "sound_enabled": False,
+            "sounds": {"critical": "bell", "bogus": "x", "info": ""},
+        }
+    )
+    assert config.sound_enabled is False
+    assert config.sounds["critical"] == "bell"
+    assert config.sounds["info"] == "ping"  # default retained
+    assert "bogus" not in config.sounds
+
+
 def test_config_deduplicates_servers_by_url() -> None:
     config = AppConfig.from_mapping(
         {
@@ -85,3 +112,48 @@ def test_config_deduplicates_servers_by_url() -> None:
 
     assert [server.url for server in config.servers] == ["http://a:1"]
     assert config.servers[0].subscriptions == ["security"]
+
+
+def test_config_round_trips_reliability_policy_without_secrets(tmp_path) -> None:
+    store = ConfigStore(tmp_path / "config.json")
+    config = AppConfig(
+        servers=[
+            ServerConfig(
+                url="https://alerts.example.com",
+                subscriptions=["security"],
+                auth_enabled=True,
+            )
+        ],
+        noise_policy=NoisePolicy(
+            channel_modes={"security": "toast_only"},
+            quiet_enabled=True,
+            cooldown_seconds=90,
+        ),
+        retention_days=60,
+        max_history=9000,
+        launch_at_login=True,
+        disconnect_warning_seconds=45,
+        client_id="desktop-client-1",
+    )
+    store.save(config)
+
+    loaded = store.load()
+    assert loaded == config
+    raw = store.path.read_text(encoding="utf-8")
+    assert "auth_enabled" in raw
+    assert "token" not in raw.lower()
+
+
+def test_config_clamps_reliability_settings() -> None:
+    config = AppConfig.from_mapping(
+        {
+            "retention_days": -2,
+            "max_history": 999_999,
+            "disconnect_warning_seconds": "bad",
+            "client_id": "!",
+        }
+    )
+    assert config.retention_days == 1
+    assert config.max_history == 100_000
+    assert config.disconnect_warning_seconds == 30
+    assert len(config.client_id) >= 8
